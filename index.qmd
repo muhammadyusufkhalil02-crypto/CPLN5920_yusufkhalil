@@ -15,8 +15,8 @@ Advanced spatial analysis and data science for urban planning and public policy.
 - **Final Project:** Capstone modeling challenge
 
 ## About Me
-I am a Master of City Planning Candidate at the University of Pennsylvania concentrating in spatial analytics as a Thouron Scholar, following a BA in the Land Economy Tripos at the University of Cambridge. 
+I am a Master of City Planning Candidate at the University of Pennsylvania concentrating in spatial analytics. I am studying as a Thouron Scholar, following a BA in the Land Economy Tripos at the University of Cambridge. 
 
 ## Contact
 - Email: khalil1@upenn.edu
-- GitHub: @muhammadyusufkhalil02-crypto/
+- GitHub: @muhammadyusufkhalil02
