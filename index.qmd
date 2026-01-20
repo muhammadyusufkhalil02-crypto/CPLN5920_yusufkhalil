@@ -1,10 +1,10 @@
 ---
-title: "MUSA 5080 Portfolio"
+title: "CPLN 5920 Portfolio"
 ---
 
 # Welcome to My Portfolio
 
-This portfolio documents my learning journey in Public Policy Analytics (MUSA 5080).
+This portfolio documents my learning journey in Public Policy Analytics (CPLN 5920).
 
 ## About This Course
 Advanced spatial analysis and data science for urban planning and public policy.
@@ -15,8 +15,8 @@ Advanced spatial analysis and data science for urban planning and public policy.
 - **Final Project:** Capstone modeling challenge
 
 ## About Me
-[Students will customize this section]
+I am a Master of City Planning Candidate at the University of Pennsylvania concentrating in spatial analytics as a Thouron Scholar, following a BA in the Land Economy Tripos at the University of Cambridge. 
 
 ## Contact
-- Email: [your.email@upenn.edu]
-- GitHub: [@your-username]
+- Email: khalil1@upenn.edu
+- GitHub: @muhammadyusufkhalil02-crypto/
