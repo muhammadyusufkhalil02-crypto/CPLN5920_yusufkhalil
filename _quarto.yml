@@ -11,8 +11,7 @@ navbar:
     - text: Labs
       menu:
         - href: labs/lab_0/
-          text: Lab 0: dplyr Basics
-
+          text: "Lab 0: dplyr Basics"
 format:
   html:
     theme: cosmo
