@@ -2,12 +2,12 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
 
 <meta charset="utf-8">
-<meta name="generator" content="quarto-1.8.25">
+<meta name="generator" content="quarto-1.8.27">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
 
 <meta name="author" content="Your Name Here">
-<meta name="dcterms.date" content="2026-01-20">
+<meta name="dcterms.date" content="2026-01-25">
 
 <title>Lab 0: Getting Started with dplyr – Yusuf Khalil - CPLN 5920 Portfolio</title>
 <style>
@@ -73,7 +73,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <script src="../../site_libs/quarto-html/tippy.umd.min.js"></script>
 <script src="../../site_libs/quarto-html/anchor.min.js"></script>
 <link href="../../site_libs/quarto-html/tippy.css" rel="stylesheet">
-<link href="../../site_libs/quarto-html/quarto-syntax-highlighting-7b89279ff1a6dce999919e0e67d4d9ec.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<link href="../../site_libs/quarto-html/quarto-syntax-highlighting-ed96de9b727972fe78a7b5d16c58bf87.css" rel="stylesheet" id="quarto-text-highlighting-styles">
 <script src="../../site_libs/bootstrap/bootstrap.min.js"></script>
 <link href="../../site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
 <link href="../../site_libs/bootstrap/bootstrap-5b4ad623e5705c0698d39aec6f10cf02.min.css" rel="stylesheet" append-hash="true" id="quarto-bootstrap" data-mode="light">
@@ -177,7 +177,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <div>
     <div class="quarto-title-meta-heading">Published</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">January 20, 2026</p>
+      <p class="date">January 25, 2026</p>
     </div>
   </div>
   
@@ -241,8 +241,8 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 </div>
 <p><strong>Questions to answer:</strong> - How many rows and columns does the dataset have? - What types of variables do you see (numeric, character, etc.)? - Are there any column names that might cause problems? Why?</p>
-<p><strong>Your answers:</strong> - Rows: [YOUR ANSWER] - Columns: [YOUR ANSWER]<br>
-- Variable types: [YOUR ANSWER] - Problematic names: [YOUR ANSWER]</p>
+<p><strong>Your answers:</strong> - Rows: [50,000] - Columns: [7]<br>
+- Variable types: [Character and numeric (with decimals)] - Problematic names: [Engine size, Fuel type, Year of manufacture. Since there are spaces in their names]</p>
 </section>
 <section id="tibble-vs-data-frame" class="level2">
 <h2 class="anchored" data-anchor-id="tibble-vs-data-frame">1.2 Tibble vs Data Frame</h2>
@@ -28847,7 +28847,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 </div>
 <p><strong>Question:</strong> What differences do you notice in how they print?</p>
-<p><strong>Your answer:</strong> [YOUR ANSWER]</p>
+<p><strong>Your answer:</strong> [Tibbles firstly outline the size of the table (50,000 x 7). Tibbles additionally label the data type of each column. Finally, Tibbles only display the first 10 rows, whereas a normal data frame prints far more. ]</p>
 </section>
 </section>
 <section id="exercise-2-basic-column-operations" class="level1">
@@ -28881,7 +28881,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 </div>
 <p><strong>Question:</strong> Why did we need backticks around <code>Year of manufacture</code> but not around <code>year</code>?</p>
-<p><strong>Your answer:</strong> [YOUR ANSWER]</p>
+<p><strong>Your answer:</strong> [There are spaces in Year of manufacture]</p>
 </section>
 </section>
 <section id="exercise-3-creating-new-columns" class="level1">
@@ -28935,7 +28935,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 <span id="cb14-7"><a href="#cb14-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Find diesel cars less than 10 years old</span></span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 <p><strong>Question:</strong> How many diesel cars are less than 10 years old?</p>
-<p><strong>Your answer:</strong> [YOUR ANSWER]</p>
+<p><strong>Your answer:</strong> [2040]</p>
 </section>
 </section>
 <section id="exercise-5-grouping-and-summarizing" class="level1">

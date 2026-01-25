@@ -61,10 +61,10 @@ head(car_data)
 - Are there any column names that might cause problems? Why?
 
 **Your answers:**
-- Rows: [YOUR ANSWER]
-- Columns: [YOUR ANSWER]  
-- Variable types: [YOUR ANSWER]
-- Problematic names: [YOUR ANSWER]
+- Rows: [50,000]
+- Columns: [7]  
+- Variable types: [Character and numeric (with decimals)]
+- Problematic names: [Engine size, Fuel type, Year of manufacture. Since there are spaces in their names]
 
 ## 1.2 Tibble vs Data Frame
 
@@ -81,7 +81,7 @@ car_df
 
 **Question:** What differences do you notice in how they print?
 
-**Your answer:** [YOUR ANSWER]
+**Your answer:** [Tibbles firstly outline the size of the table (50,000 x 7). Tibbles additionally label the data type of each column. Finally, Tibbles only display the first 10 rows, whereas a normal data frame prints far more.  ]
 
 # Exercise 2: Basic Column Operations
 
@@ -114,7 +114,7 @@ names(car_data)
 
 **Question:** Why did we need backticks around `Year of manufacture` but not around `year`?
 
-**Your answer:** [YOUR ANSWER]
+**Your answer:** [There are spaces in Year of manufacture]
 
 # Exercise 3: Creating New Columns
 
@@ -170,7 +170,7 @@ names(car_data)
 
 **Question:** How many diesel cars are less than 10 years old?
 
-**Your answer:** [YOUR ANSWER]
+**Your answer:** [2040]
 
 # Exercise 5: Grouping and Summarizing
 
