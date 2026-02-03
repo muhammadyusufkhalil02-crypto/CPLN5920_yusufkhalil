@@ -46,13 +46,15 @@ Explore the structure of your data and answer these questions:
 
 ```{r explore-structure}
 # Use glimpse() to see the data structure
-
+glimpse(car_data)
 
 # Check the column names
-
+colnames(car_data)
 
 # Look at the first few rows
 head(car_data)
+
+car_data
 ```
 
 **Questions to answer:**
@@ -91,13 +93,17 @@ Practice selecting different combinations of columns:
 
 ```{r column-selection}
 # Select just Model and Mileage columns
+select(car_data, "Model","Mileage")
 
+car_data %>% select(Manufacturer, Mileage)
 
 # Select Manufacturer, Price, and Fuel type
+select(car_data, "Manufacturer", "Price", "Fuel type")
 
+car_data %>% select(Manufacturer, Price, 'Fuel type')
 
 # Challenge: Select all columns EXCEPT Engine Size
-
+car_data %>% select(!('Engine size'))
 ```
 
 ## 2.2 Renaming Columns
@@ -106,7 +112,7 @@ Let's fix a problematic column name:
 
 ```{r rename-columns}
 # Rename 'Year of manufacture' to year
-
+car_data <- rename(car_data, year = 'Year of manufacture')
 
 # Check that it worked
 names(car_data)
@@ -122,22 +128,27 @@ names(car_data)
 
 ```{r calculate-age}
 # Create an 'age' column (2025 minus year of manufacture)
+car_data <- mutate(car_data, age = 2025 - year)
 
+car_data
 
 # Create a mileage_per_year column  
-
+car_data <- mutate(car_data, mileage_per_year = Mileage/age)
+car_data
 
 # Look at your new columns
 #select(car_data, Model, year, age, Mileage, mileage_per_year)
+car_data %>% select(Model, year, age, Mileage, mileage_per_year)
 ```
 
 ## 3.2 Categorize Cars
 
 ```{r categorize-cars}
 # Create a price_category column where if price is < 15000, its is coded as budget, between 15000 and 30000 is midrange and greater than 30000 is mid-range (use case_when)
-
+car_data <- mutate(car_data, price_category = case_when(Price < 15000 ~ "budget", Price > 30000 ~ "Luxury", Price >= 15000 & Price <= 30000 ~ "midrange"))
 
 # Check your categories select the new column and show it
+car_data %>% select(price_category)
 ```
 
 # Exercise 4: Filtering Practice
@@ -146,12 +157,14 @@ names(car_data)
 
 ```{r basic-filtering}
 # Find all Toyota cars
-
+car_data %>% filter(Manufacturer == "Toyota")
 
 # Find cars with mileage less than 30,000
+car_data %>% filter(Mileage < 30000)
 
 
 # Find luxury cars (from price category) with low mileage
+car_data %>% filter(price_category == "Luxury", Mileage > 30000)
 
 ```
 
@@ -159,13 +172,15 @@ names(car_data)
 
 ```{r multiple-conditions}
 # Find cars that are EITHER Honda OR Nissan
-
+car_data %>% distinct(Manufacturer)
+car_data %>% filter(Manufacturer == "Honda" | Manufacturer == "Nissan")
 
 # Find cars with price between $20,000 and $35,000
+car_data %>% filter(Price >= 20000 & Price <= 35000)
 
 
 # Find diesel cars less than 10 years old
-
+car_data %>% filter(`Fuel type` == "Diesel" & age < 10)
 ```
 
 **Question:** How many diesel cars are less than 10 years old?
@@ -184,10 +199,14 @@ avg_price_by_brand <- car_data %>%
 
 avg_price_by_brand
 
+
 # Calculate average mileage by fuel type
+avg_mileage_by_fueltype <- car_data %>% group_by(`Fuel type`) %>% summarise(avg_mileage = mean(Mileage))
+avg_mileage_by_fueltype
 
 
 # Count cars by manufacturer
+car_count <- car_data %>% group_by(Manufacturer) %>% count(Manufacturer)
 
 ```
 
@@ -195,7 +214,7 @@ avg_price_by_brand
 
 ```{r categorical-summaries}
 # Frequency table for price categories
-
+car_data %>% count(price_category)
 ```
 
 
