@@ -1,8 +1,8 @@
 ---
 title: "Lab 1: Census Data Quality for Policy Decisions"
 subtitle: "Evaluating Data Reliability for Algorithmic Decision-Making"
-author: "Your Name Here"
-date: today
+author: "Muhammad Yusuf Khalil"
+date: February 9, 2026
 format: 
   html:
     code-fold: false
@@ -18,7 +18,7 @@ execute:
 
 ## Scenario
 
-You are a data analyst for the **[Your State] Department of Human Services**. The department is considering implementing an algorithmic system to identify communities that should receive priority for social service funding and outreach programs. Your supervisor has asked you to evaluate the quality and reliability of available census data to inform this decision.
+You are a data analyst for the **Pennsylvania Department of Human Services**. The department is considering implementing an algorithmic system to identify communities that should receive priority for social service funding and outreach programs. Your supervisor has asked you to evaluate the quality and reliability of available census data to inform this decision.
 
 Drawing on our Week 2 discussion of algorithmic bias, you need to assess not just what the data shows, but how reliable it is and what communities might be affected by data quality issues.
 
@@ -52,13 +52,18 @@ If there is a special character like a colon, you need use double quote mark so 
 
 ```{r setup}
 # Load required packages (hint: you need tidycensus, tidyverse, and knitr)
+library(tidycensus)
+library(tidyverse)
+library(knitr)
+library(ggplot2)
 
 # Set your Census API key
 
 # Choose your state for analysis - assign it to a variable called my_state
+my_state <- "Pa"
 ```
 
-**State Selection:** I have chosen **[Your State Name]** for this analysis because: [Brief explanation of why you chose this state]
+**State Selection:** I have chosen **Pennsylvania** for this analysis because: I am comfortable with the states geography and its demography 
 
 # Part 2: County-Level Resource Assessment
 
@@ -77,9 +82,36 @@ If there is a special character like a colon, you need use double quote mark so 
 
 ```{r county-data}
 # Write your get_acs() code here
+state_pop <- get_acs(
+  geography = "state",
+  variables = "B01003_001",  # Total population
+  year = 2022,
+  survey = "acs5"
+)
+
+glimpse(state_pop)
+
+pa_data <- get_acs(
+  geography = "county",
+  variables = c(
+    total_pop = "B01003_001",
+    median_income = "B19013_001"
+  ),
+  state = "PA",
+  year = 2022,
+  output = "wide"  # Makes analysis easier
+)
+head(pa_data)
 
 # Clean the county names to remove state name and "County" 
 # Hint: use mutate() with str_remove()
+pa_clean <- pa_data %>%
+  mutate(
+    # Remove state name from county names
+    county_name = str_remove(NAME, ", Pennsylvania"),
+    # Remove "County" word
+    county_name = str_remove(county_name, " County")
+  )
 
 # Display the first few rows
 ```
@@ -100,9 +132,26 @@ If there is a special character like a colon, you need use double quote mark so 
 
 ```{r income-reliability}
 # Calculate MOE percentage and reliability categories using mutate()
+select(pa_clean, NAME, county_name)
+
+pa_reliability <- pa_clean %>%
+  mutate(
+    # Calculate MOE as percentage of estimate
+    moe_percentage = round((median_incomeM / median_incomeE) * 100, 2),
+    
+    # Create reliability categories
+    reliability = case_when(
+      moe_percentage < 5 ~ "High Confidence",
+      moe_percentage >= 5 & moe_percentage <= 8 ~ "Moderate",
+      moe_percentage > 8 ~ "Low Confidence"
+    )
+  )
+count(pa_reliability, reliability)
 
 # Create a summary showing count of counties in each reliability category
 # Hint: use count() and mutate() to add percentages
+
+
 ```
 
 ## 2.3 High Uncertainty Counties
@@ -119,13 +168,31 @@ If there is a special character like a colon, you need use double quote mark so 
 
 ```{r high-uncertainty}
 # Create table of top 5 counties by MOE percentage
+# Find counties with highest uncertainty
+high_uncertainty <- pa_reliability %>%
+  filter(moe_percentage > 8) %>%
+  arrange(desc(moe_percentage)) %>%
+  select(county_name, median_incomeE, moe_percentage)
+
+# Summary by reliability category  
+reliability_summary <- pa_reliability %>%
+  group_by(reliability) %>%
+  summarise(
+    counties = n(),
+    avg_income = round(mean(median_incomeE, na.rm = TRUE), 0)
+  )
 
 # Format as table with kable() - include appropriate column names and caption
+# Create formatted table
+kable(high_uncertainty,
+      col.names = c("County", "Median Income", "MOE %"),
+      caption = "Counties with Highest Income Data Uncertainty",
+      format.args = list(big.mark = ","))
 ```
 
 **Data Quality Commentary:**
 
-[Write 2-3 sentences explaining what these results mean for algorithmic decision-making. Consider: Which counties might be poorly served by algorithms that rely on this income data? What factors might contribute to higher uncertainty?]
+Forest and Sullivan counties, Pennsylvania's smallest by population, show the highest income data uncertainty (MOE > 9%), reflecting the well-documented relationship between small sample sizes and imprecise ACS estimates. Algorithms relying on these point estimates risk systematically misallocating resources to rural communities, where the true median income could plausibly differ by several thousand dollars.
 
 # Part 3: Neighborhood-Level Analysis
 
@@ -138,12 +205,26 @@ If there is a special character like a colon, you need use double quote mark so 
 ```{r select-counties}
 # Use filter() to select 2-3 counties from your county_reliability data
 # Store the selected counties in a variable called selected_counties
-
 # Display the selected counties with their key characteristics
 # Show: county name, median income, MOE percentage, reliability category
+
+focus_area <- pa_reliability %>%
+  filter(NAME %in% c("Forest County, Pennsylvania", "Snyder County, Pennsylvania", "Montgomery County, Pennsylvania"))
+  #select(NAME == c("Forest County, Pennsylvania", "Snyder County, Pennsylvania", "Montgomery County, Pennsylvania"))
+
+selected_counties <- focus_area %>%
+  select(GEOID,NAME, median_incomeE, moe_percentage, reliability)
+
+kable(selected_counties, 
+      col.names = c("GEOID", "County", "Median Income", "MOE %", "Reliability Category"),
+      caption = "Selected Counties",
+      format.args = list(big.mark = ",")
+      )
+
+
 ```
 
-**Comment on the output:** [write something :)]
+**Comment on the output:** I selected three County's each from a different reliability category. 
 
 ## 3.2 Tract-Level Demographics
 
@@ -159,13 +240,40 @@ If there is a special character like a colon, you need use double quote mark so 
 ```{r tract-demographics}
 # Define your race/ethnicity variables with descriptive names
 
+Selected_data <- get_acs(
+  geography = "tract",
+  variables = c(White_alone = "B03002_003",
+                Black_AA = "B03002_004",
+                Hisp_lat = "B03002_012",
+                Total_pop = "B03002_001"),
+  state = "PA",
+  county = c("053", "091", "109"),
+  year = 2023,
+  survey = "acs5",
+  output = "wide"
+  
+  
+)
+
 # Use get_acs() to retrieve tract-level data
 # Hint: You may need to specify county codes in the county parameter
 
 # Calculate percentage of each group using mutate()
 # Create percentages for white, Black, and Hispanic populations
+Revised_data <- Selected_data %>%
+  mutate(white_perc = (White_aloneE/Total_popE)*100,
+         black_perc = (Black_AAE/Total_popE)*100,
+         Hisp_perc = (Hisp_latE/Total_popE)*100
+         
+         )
 
 # Add readable tract and county name columns using str_extract() or similar
+Final_Data <- Revised_data %>%
+  mutate(County = str_extract(NAME, "Forest County|Montgomery County|Snyder County"),
+         Tract = str_extract(NAME, "Census Tract [0-9.]+")
+         )
+
+
 ```
 
 ## 3.3 Demographic Analysis
@@ -175,11 +283,29 @@ If there is a special character like a colon, you need use double quote mark so 
 ```{r demographic-analysis}
 # Find the tract with the highest percentage of Hispanic/Latino residents
 # Hint: use arrange() and slice() to get the top tract
+Demo_analysis <- Final_Data %>%
+  arrange(desc(Hisp_perc)) %>%
+  slice_head(n = 3)
 
 # Calculate average demographics by county using group_by() and summarize()
 # Show: number of tracts, average percentage for each racial/ethnic group
+avg_demo <- Final_Data %>%
+  filter(!is.na(white_perc)) %>%
+  group_by(County) %>%
+  summarise(
+    num_tracts = n(),
+    avg_white = round(mean(white_perc), 3),
+    avg_black = round(mean(black_perc),3),
+    avg_hisp = round(mean(Hisp_perc),3)
+    )
+  
 
 # Create a nicely formatted table of your results using kable()
+kable(avg_demo,
+      col.names = c("County Names", "Number of Census Tracts", "Average White %", "Average Black %", "Average Hispanic %"),
+      caption = "Average Demographic"
+      )
+
 ```
 
 # Part 4: Comprehensive Data Quality Evaluation
@@ -197,10 +323,48 @@ If there is a special character like a colon, you need use double quote mark so 
 # Calculate MOE percentages for white, Black, and Hispanic variables
 # Hint: use the same formula as before (margin/estimate * 100)
 
+Final_Moe <- Final_Data %>%
+  mutate(
+    white_moe = round((White_aloneM/White_aloneE)*100,2),
+    black_moe = round((Black_AAM/Black_AAE)*100, 2),
+    hisp_moe = round((Hisp_latM/Hisp_latE)*100, 2),
+    pop_moe = round((Total_popM/Total_popE)*100, 2)
+  )
+
+quantile(Final_Moe$white_moe)
+
 # Create a flag for tracts with high MOE on any demographic variable
 # Use logical operators (| for OR) in an ifelse() statement
+Flagged_data <- Final_Moe %>%
+  mutate(
+    across(c(white_moe, black_moe, hisp_moe),
+           ~if_else(. > 15, "Flagged", "Non-Flagged")
+           
+           )
+
+    
+  )
+  
+   # flagged = case_when(white_moe >= 15 ~ "Flagged",
+    #                    white_moe <= 15 ~ "Not-flagged",
+     #                   black_moe >= 15 ~ "Flagged",
+      #                  black_moe <= 15 ~ "Not-flagged",
+       #                 hisp_moe >= 15 ~ "Flagged",
+        #                hisp_moe <= 15 ~ "Not-flagged",)
 
 # Create summary statistics showing how many tracts have data quality issues
+summary_stats <- Flagged_data %>%
+  group_by(County, white_moe) %>%
+  summarise(
+    tracts = n(),
+  )
+
+kable(summary_stats,
+      col.names = c("County", "Reliability Issues", "Number of Tracts"),
+      caption = "Number of Census Tracts with Data Reliability Issues per County"
+      
+      )
+
 ```
 
 ## 4.2 Pattern Analysis
@@ -211,12 +375,41 @@ If there is a special character like a colon, you need use double quote mark so 
 # Group tracts by whether they have high MOE issues
 # Calculate average characteristics for each group:
 # - population size, demographic percentages
+pattern_analysis <- Flagged_data %>%
+  pivot_longer(
+    cols = c(white_moe, black_moe, hisp_moe),
+    names_to = "group",
+    values_to = "MOE_flag"
+  ) %>%
+  
+# Calculate average characteristics for each group:
+# - population size, demographic percentages
+
+  group_by(group, MOE_flag) %>%
+  summarise(
+    n_tracts = n(),
+    avg_total_pop = round(mean(Total_popE, na.rm = TRUE), 0),
+    avg_white = round(mean(white_perc, na.rm = TRUE), 1),
+    avg_black = round(mean(black_perc, na.rm = TRUE), 1),
+    avg_hisp = round(mean(Hisp_perc, na.rm = TRUE), 1),
+    .groups = "drop"
+  )
+
+
 
 # Use group_by() and summarize() to create this comparison
 # Create a professional table showing the patterns
+kable(pattern_analysis,
+      col.names = c("Group", "MOE Flag", "Tracts", "Avg Pop",
+                     "Avg White %", "Avg Black %", "Avg Hispanic %"),
+      caption = "Tract Characteristics by Demographic Data Reliability",
+      format.args = list(big.mark = ","))
+
+
+
 ```
 
-**Pattern Analysis:** [Describe any patterns you observe. Do certain types of communities have less reliable data? What might explain this?]
+**Pattern Analysis:** Data quality issues are not randomly distributed but concentrate in smaller, more diverse tracts. All 229 tracts were flagged for unreliable Hispanic data, and only 2 had reliable Black population estimates, both with unusually large Black populations (40.5%). Meanwhile, tracts with reliable white population data tend to be larger and more homogeneous. This reflects a fundamental sample size problem: when a group is a small share of a small population, the ACS cannot produce precise estimates, meaning the communities most relevant to equity-focused policy are those with the least reliable data.
 
 
 # Part 5: Policy Recommendations
@@ -232,8 +425,15 @@ If there is a special character like a colon, you need use double quote mark so 
 4. **Strategic Recommendations**: What should the Department implement to address these systematic issues?
 
 **Executive Summary:**
+The analysis reveals an inverse relationship between data reliability and the size of the Pennsylvania County. At the county level in Pennsylvania there were 2 counties with low confidence, 8 counties with moderate confidence but over 57 with high confidence. Those with lower confidence were typically smaller and more rural in nature. 
+On the census tract level, we found that Hispanic and Black populations would have far less reliable data. For instance the number of white MOE that was flagged looking at all 3 counties was 128/229 census tracts with a MOE over 15%. In comparison, all 229 census tracts had Hispanic population recorded with a MOE of over 15%. Thus there is a clear disparity in terms of data reliability. 
 
-[Your integrated 4-paragraph summary here]
+The communities facing the worst algorithmic bias are the Black and Hispanic population. Pattern analysis shows that tracts that were not flagged had a majority white population. For instance, in our study, tracts that were not flagged had a Black population of 5.1% and Hispanic population of 4.6%.
+This means an equity focused algorithm would be relying on the least precise data if it wanted to target minority population.
+
+Since the ACS is a sample survey, for smaller populations it will garner fewer observations with wider MOE. This trend compounds spatially, with less populated tracts and counties having the largest MOE. 
+
+To address these systematic issues we recommend that the department adopts a tiered approach to using data for policy purposes. For survey data with a MOE < 5%, this should be used for data analysis purposes. On the other hand, data with a MOE between 5% and 15% should be manually parsed through. Here any anomalies can be addressed and analysed. Data may still be used in these cases. Finally data with a MOE of over 15% should not be used. Instead, policymakers should rely on admiinistrative data on a local scale. Additionally, they may pursue community engagement activities to address these data inequalities. 
 
 ## 6.3 Specific Recommendations
 
@@ -242,45 +442,68 @@ If there is a special character like a colon, you need use double quote mark so 
 ```{r recommendations-data}
 # Create a summary table using your county reliability data
 # Include: county name, median income, MOE percentage, reliability category
-
+recommendations <- pa_reliability %>%
+  select(county_name, median_incomeE, moe_percentage, reliability) %>%
+  mutate(
+    
 # Add a new column with algorithm recommendations using case_when():
 # - High Confidence: "Safe for algorithmic decisions"
 # - Moderate Confidence: "Use with caution - monitor outcomes"  
 # - Low Confidence: "Requires manual review or additional data"
+    
+    algorithm_rec = case_when(
+      reliability == "High Confidence" ~ "Safe for algorithmic decisions",
+      reliability == "Moderate" ~ "Use with caution - monitor outcomes",
+      reliability == "Low Confidence" ~ "Requires manual review or additional data"
+    )
+  ) %>%
+  arrange(desc(moe_percentage))
 
 # Format as a professional table with kable()
+kable(recommendations,
+      col.names = c("County", "Median Income", "MOE %", 
+                     "Reliability", "Algorithm Recommendation"),
+      caption = "Decision Framework for Algorithm Implementation by County",
+      format.args = list(big.mark = ","))
+
+recommendations %>%
+  filter(reliability == "Low Confidence") %>%
+  pull(county_name)
+
 ```
 
 **Key Recommendations:**
 
 **Your Task:** Use your analysis results to provide specific guidance to the department.
 
-1. **Counties suitable for immediate algorithmic implementation:** [List counties with high confidence data and explain why they're appropriate]
+1. **Counties suitable for immediate algorithmic implementation:** Counties suitable for immediate algorithmic implementation: 57 of Pennsylvania's 67 counties fall into the High Confidence category (MOE < 5%), ranging from Allegheny (1.20%) to Pike (4.90%). These include the state's most populous counties, Allegheny, Montgomery, Philadelphia, Bucks, Delaware, Chester, and Lancaster, as well as mid-size and smaller counties like Tioga, Fulton, and Potter. Their income estimates are precise enough that algorithmic resource allocation decisions can rely on this data without significant risk of misclassifying community need. The full list is: Pike, Juniata, Wayne, McKean, Huntingdon, Indiana, Bedford, Potter, Lycoming, Clarion, Adams, Fayette, Crawford, Clinton, Wyoming, Columbia, Fulton, Mercer, Armstrong, Bradford, Blair, Venango, Mifflin, Jefferson, Cambria, Tioga, Monroe, Perry, Susquehanna, Lawrence, Franklin, Clearfield, Somerset, Centre, Lebanon, Northumberland, Butler, Lackawanna, Erie, Schuylkill, Washington, Luzerne, Beaver, Dauphin, Cumberland, Lehigh, Westmoreland, Northampton, Lancaster, York, Chester, Berks, Delaware, Bucks, Philadelphia, Montgomery, and Allegheny.
 
-2. **Counties requiring additional oversight:** [List counties with moderate confidence data and describe what kind of monitoring would be needed]
+2. **Counties requiring additional oversight:** Counties requiring additional oversight: Eight counties fall into the Moderate Confidence category (MOE 5–8%): Union (7.32%), Montour (7.09%), Elk (6.63%), Greene (6.41%), Cameron (5.64%), Snyder (5.56%), Carbon (5.31%), and Warren (5.19%). Algorithmic outputs for these counties should be treated as guidance rather than definitive classifications. Any county whose MOE trends upward toward the 8% threshold in future ACS releases should be escalated for manual verification before funding decisions are made.
 
-3. **Counties needing alternative approaches:** [List counties with low confidence data and suggest specific alternatives - manual review, additional surveys, etc.]
+3. **Counties needing alternative approaches:** Counties needing alternative approaches: Forest (9.99% MOE) and Sullivan (9.25% MOE) are the only two Low Confidence counties. Their small populations produce ACS estimates too imprecise for reliable automated targeting. For these counties, the Department should rely on local administrative records 
 
 ## Questions for Further Investigation
 
-[List 2-3 questions that your analysis raised that you'd like to explore further in future assignments. Consider questions about spatial patterns, time trends, or other demographic factors.]
+How does population density correlate with data reliability? Our analysis suggests rural, sparsely populated counties like Forest and Sullivan have the highest MOE values, but a more systematic examination of population density at the tract level could reveal whether there is a clear threshold below which ACS estimates become unreliable for policy use.
+
+Do home values follow the same reliability patterns as median income? If the Department were to incorporate housing market data such as median home value (ACS table B25077) into its algorithm, it would be important to assess whether the same counties and tracts flagged for income unreliability also have imprecise home value estimates, or whether property data offers a more stable alternative input.
 
 # Technical Notes
 
 **Data Sources:** 
 - U.S. Census Bureau, American Community Survey 2018-2022 5-Year Estimates
-- Retrieved via tidycensus R package on [date]
+- Retrieved via tidycensus R package on 05/02/2026
 
 **Reproducibility:** 
-- All analysis conducted in R version [your version]
-- Census API key required for replication
-- Complete code and documentation available at: [your portfolio URL]
+- All analysis conducted in R version 2026
+- Census API key required for replication 6986ece47521ee5f440e05d889a10797329fb58a
+- Complete code and documentation available at: https://muhammadyusufkhalil02-crypto.github.io/CPLN5920_yusufkhalil/
 
 **Methodology Notes:**
-[Describe any decisions you made about data processing, county selection, or analytical choices that might affect reproducibility]
+Counties were selected to span all three reliability categories: Forest (Low Confidence), Snyder (Moderate), and Montgomery (High Confidence). Reliability thresholds were set at 5% and 8% MOE rather than the suggested 5% and 10% to better fit Pennsylvania's distribution. The tract-level pull uses 2023 ACS data whilst the county-level pull uses 2022, which may introduce minor inconsistencies.
 
 **Limitations:**
-[Note any limitations in your analysis - sample size issues, geographic scope, temporal factors, etc.]
+This analysis examines only 3 of Pennsylvania's 67 counties at the tract level, limiting generalisability. Forest County has only 2 census tracts, making tract-level patterns from that county unreliable. The 15% MOE flagging threshold is somewhat arbitrary and could yield different results if adjusted. Finally, the ACS margins of error assume simple random sampling, whilst the actual survey design is more complex, meaning true uncertainty may differ from reported values.
 
 ---
 
@@ -288,12 +511,12 @@ If there is a special character like a colon, you need use double quote mark so 
 
 Before submitting your portfolio link on Canvas:
 
-- [ ] All code chunks run without errors
-- [ ] All "[Fill this in]" prompts have been completed
-- [ ] Tables are properly formatted and readable
-- [ ] Executive summary addresses all four required components
-- [ ] Portfolio navigation includes this assignment
-- [ ] Census API key is properly set 
-- [ ] Document renders correctly to HTML
+- [X] All code chunks run without errors
+- [X] All "[Fill this in]" prompts have been completed
+- [X] Tables are properly formatted and readable
+- [X] Executive summary addresses all four required components
+- [X] Portfolio navigation includes this assignment
+- [X] Census API key is properly set 
+- [X] Document renders correctly to HTML
 
 **Remember:** Submit your portfolio URL on Canvas, not the file itself. Your assignment should be accessible at `your-portfolio-url/labs/lab_1/your_file_name.html`
