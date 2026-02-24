@@ -355,5 +355,362 @@
     "title": "Week 3 In-Class Lab: Data Visualization and EDA",
     "section": "Key References and Acknowledgments",
     "text": "Key References and Acknowledgments\nJurjevich, J. R., Griffin, A. L., Spielman, S. E., Folch, D. C., Merrick, M., & Nagle, N. N. (2018). Navigating statistical uncertainty: How urban and regional planners understand and work with American community survey (ACS) data for guiding policy. Journal of the American Planning Association, 84(2), 112-126.\nWalker, K. (2023). Analyzing US Census Data: Methods, Maps, and Models in R. Available at: https://walker-data.com/census-r/\nAI Acknowledgments: This lab was developed with coding assistance from Claude AI. I have run, reviewed, and edited the final version. Any remaining errors are my own."
+  },
+  {
+    "objectID": "labs/lab_2/lab_2.html",
+    "href": "labs/lab_2/lab_2.html",
+    "title": "Lab 2: Spatial Analysis and Visualization",
+    "section": "",
+    "text": "Learning Objectives: - Apply spatial operations to answer policy-relevant research questions - Integrate census demographic data with spatial analysis - Create publication-quality visualizations and maps - Work with spatial data from multiple sources - Communicate findings effectively for policy audiences"
+  },
+  {
+    "objectID": "labs/lab_2/lab_2.html#assignment-overview",
+    "href": "labs/lab_2/lab_2.html#assignment-overview",
+    "title": "Lab 2: Spatial Analysis and Visualization",
+    "section": "",
+    "text": "Learning Objectives: - Apply spatial operations to answer policy-relevant research questions - Integrate census demographic data with spatial analysis - Create publication-quality visualizations and maps - Work with spatial data from multiple sources - Communicate findings effectively for policy audiences"
+  },
+  {
+    "objectID": "labs/lab_2/lab_2.html#part-1-healthcare-access-for-vulnerable-populations",
+    "href": "labs/lab_2/lab_2.html#part-1-healthcare-access-for-vulnerable-populations",
+    "title": "Lab 2: Spatial Analysis and Visualization",
+    "section": "Part 1: Healthcare Access for Vulnerable Populations",
+    "text": "Part 1: Healthcare Access for Vulnerable Populations\n\nResearch Question\nWhich Pennsylvania counties have the highest proportion of vulnerable populations (elderly + low-income) living far from hospitals?\nYour analysis should identify counties that should be priorities for healthcare investment and policy intervention.\n\n\nRequired Analysis Steps\nComplete the following analysis, documenting each step with code and brief explanations:\n\nStep 1: Data Collection (5 points)\nLoad the required spatial data: - Pennsylvania county boundaries - Pennsylvania hospitals (from lecture data) - Pennsylvania census tracts\nYour Task:\n\nlibrary(sf)\nlibrary(tidyverse)\nlibrary(tigris)\nlibrary(tidycensus)\nlibrary(scales)\nlibrary(patchwork)\nlibrary(here)\n\n\n# Load spatial data\npa_counties &lt;- st_read(here(\"data/Pennsylvania_County_Boundaries.shp\"))\ndistricts &lt;- st_read(here(\"data/districts.geojson\"))\nhospitals &lt;- st_read(here(\"data/hospitals.geojson\"))\ncensus_tracts &lt;- tracts(state = \"PA\", cb = TRUE)\nmetro_areas &lt;- core_based_statistical_areas(cb = TRUE)\n\n\n# Check that all data loaded correctly\n\nst_crs(hospitals)\nhead(hospitals)\ncount(hospitals)\ndistinct(hospitals)\n\n\ncount(census_tracts)\nst_crs(census_tracts)\n\nst_crs(pa_counties)\n\nQuestions to answer: - How many hospitals are in your dataset? 222 - How many census tracts? 3445 - What coordinate reference system is each dataset in? Hospitals: WGS 84, Census Tracts: NAD83, Counties: WGS 84 / Pseudo-Mercator\n\n\n\nStep 2: Get Demographic Data\nUse tidycensus to download tract-level demographic data for Pennsylvania.\nRequired variables: - Total population - Median household income - Population 65 years and over (you may need to sum multiple age categories)\nYour Task:\n\n# Get demographic data from ACS\nacs_vars_2023 &lt;- load_variables(2023, \"acs5\", cache = TRUE)\n\nold_people &lt;- c(\"B01001A_014\", \"B01001A_015\", \"B01001A_016\", \"B01001A_029\", \"B01001A_030\", \"B01001A_031\",\n                \"B01001B_014\", \"B01001B_015\", \"B01001B_016\", \"B01001B_029\", \"B01001B_030\", \"B01001B_031\",\n                \"B01001D_014\", \"B01001D_015\", \"B01001D_016\", \"B01001D_029\", \"B01001D_030\", \"B01001D_031\")\n\ndemp_data &lt;- get_acs(geography = \"Tract\",\n                     variables = c(Total_population =\"B01003_001\",\n                                   Median_household_income = \"B19013_001\"\n                                   ),\n                     state = \"PA\",\n                     year = 2023,\n                     survey = \"acs5\",\n                     output = \"wide\"\n                     )\n\ndemo_data1 &lt;- get_acs(geography = \"Tract\",\n                     variables = old_people,\n                     state = \"PA\",\n                     year = 2023,\n                     survey = \"acs5\",\n                                                  \n                     )%&gt;%\n  group_by(GEOID, NAME) %&gt;%\n  summarise(pop_65up = sum(estimate))%&gt;%\n  ungroup()\n#Does not work when output is wide\n\ndemo_data_total &lt;- inner_join(demp_data, demo_data1)\nview(demo_data_total)\n\n# Join to tract boundaries\n\ndemo_data_final &lt;- census_tracts %&gt;%\n  inner_join(demo_data_total, by = \"GEOID\")\n\nmissing_income &lt;- demo_data_final %&gt;%\n  filter(is.na(Median_household_incomeE))\nmissing_income\n\nmedian_income &lt;- demo_data_final %&gt;%\n  summarise(median_income = median(Median_household_incomeE, na.rm = TRUE))\n\nQuestions to answer: - What year of ACS data are you using? 2023 - How many tracts have missing income data? 65 - What is the median income across all PA census tracts? $72,943.5\n\n\n\nStep 3: Define Vulnerable Populations\nIdentify census tracts with vulnerable populations based on TWO criteria: 1. Low median household income (choose an appropriate threshold) 2. Significant elderly population (choose an appropriate threshold)\nYour Task:\n\n# Filter for vulnerable tracts based on your criteria\n\nhist(demo_data_final$Median_household_incomeE)\n\n\n\n\n\n\n\nquantile(demo_data_final$Median_household_incomeE, na.rm = TRUE)\n\n       0%       25%       50%       75%      100% \n 13307.00  57863.50  72943.50  96690.75 250001.00 \n\nhist(demo_data_final$pop_65up)\n\n\n\n\n\n\n\nquantile(demo_data_final$pop_65up)\n\n  0%  25%  50%  75% 100% \n   0  406  643  918 2513 \n\nvulnerable_tracts &lt;- demo_data_final %&gt;%\n  mutate(\n    vuln_income = case_when(\n      Median_household_incomeE &lt;= 57863 ~ \"vuln_income\"),\n    vuln_age = case_when(\n      pop_65up &gt;= 918 ~ \"vuln_age\"\n    )\n    )\n\ntotal_vuln_tracts &lt;- vulnerable_tracts %&gt;% \n  filter(vuln_income == vuln_income | vuln_age == vuln_age) \n\nQuestions to answer: - What income threshold did you choose and why? $57,863 — the 25th percentile of median household income across PA tracts, identified using the histogram and quantile function. Tracts below this threshold represent the lowest-earning quarter of the state.\n\nWhat elderly population threshold did you choose and why? 918 — the 75th percentile of population aged 65+, meaning tracts above this have a disproportionately large elderly population compared to most PA tracts.\nHow many tracts meet your vulnerability criteria? 1,625\nWhat percentage of PA census tracts are considered vulnerable by your definition? 47%\n\n\n\n\nStep 4: Calculate Distance to Hospitals\nFor each vulnerable tract, calculate the distance to the nearest hospital.\nYour Task:\n\n# Transform to appropriate projected CRS\nvulnerable_tracts_proj &lt;- vulnerable_tracts %&gt;%\n  filter(vuln_income == \"vuln_income\" | vuln_age == \"vuln_age\") %&gt;%\n  st_transform(crs = 2272)\n\nhospitals_proj &lt;- hospitals %&gt;%\n  st_transform(crs = 2272)\n\n# Calculate distance from each tract centroid to nearest hospital\n\n#Turn Vulnerable Tract centroids into points\nvuln_tract_centroids &lt;- vulnerable_tracts_proj %&gt;%\n  st_centroid()\n\n#Finding distance to hosptial matrix\ndist_to_hosp &lt;- st_distance(vuln_tract_centroids, hospitals_proj) \n  apply(dist_to_hosp, 1, min)\n\ndist_to_hosp\n\n#Changing from feet to miles and rouding to 2 D.P\nvuln_tract_centroids$nearest_hospital_miles &lt;- round(apply(dist_to_hosp, 1, min) / 5280 ,2)\n\navg_dist_hosp &lt;- mean(vuln_tract_centroids$nearest_hospital_miles)\navg_dist_hosp\nview(vuln_tract_centroids)\n\nRequirements: - Use an appropriate projected coordinate system for Pennsylvania - Calculate distances in miles - Explain why you chose your projection\nQuestions to answer: - What is the average distance to the nearest hospital for vulnerable tracts? 3.93 - What is the maximum distance? 19.16 - How many vulnerable tracts are more than 15 miles from the nearest hospital? 39\n\n\n\nStep 5: Identify Underserved Areas\nDefine “underserved” as vulnerable tracts that are more than 15 miles from the nearest hospital.\nYour Task:\n\n# Create underserved variable\nunderserved_tract &lt;- vuln_tract_centroids %&gt;%\n  mutate(\n    underserved = case_when(\n      nearest_hospital_miles &gt; 15 ~ \"Underserved\"\n    )\n  )\n\nunderserved_tract %&gt;% filter(underserved == \"Underserved\") %&gt;% nrow()\n\n[1] 39\n\n\nQuestions to answer: - How many tracts are underserved? 39 - What percentage of vulnerable tracts are underserved? 2.4% - Does this surprise you? Why or why not? No. Pennsylvania is a large state with both dense urban areas and sparsely populated rural regions. Most hospitals are concentrated in cities and suburban centers, so it’s expected that a small number of rural tracts with vulnerable populations fall outside a 15-mile service radius.\n\n\n\nStep 6: Aggregate to County Level\nUse spatial joins and aggregation to calculate county-level statistics about vulnerable populations and hospital access.\nYour Task:\n\n# Spatial join tracts to counties\npa_counties_proj &lt;- pa_counties %&gt;% st_transform(crs = 2272)\n\nunderserved_tract_join &lt;- st_join(underserved_tract, pa_counties_proj)\n\n# Aggregate statistics by county\ncounty_stats &lt;- underserved_tract_join %&gt;%\n  st_drop_geometry(.) %&gt;%\n  group_by(COUNTY_NAM) %&gt;%\n  summarise(\n    vulnerable_tracts = n(),\n    underserved_tracts = sum(underserved == \"Underserved\", na.rm = TRUE)\n  )\n\n#County-level Statistics Calculations\ncounty_stats_summary &lt;- sum(county_stats$vulnerable_tracts)\navg_dist_nrst_hosp &lt;- mean(underserved_tract$nearest_hospital_miles)\ntotal_vuln_pop &lt;- sum(underserved_tract$Total_populationE)\ntotal_underserved &lt;- sum(county_stats$underserved_tracts)\n\nunderserved_tract %&gt;%\n  filter(underserved == \"Underserved\") %&gt;%\n  group_by(NAMELSADCO) %&gt;%\n  summarise(total_vuln_pop = sum(Total_populationE, na.rm = TRUE)) %&gt;%\n  arrange(desc(total_vuln_pop))\n\nSimple feature collection with 24 features and 2 fields\nGeometry type: GEOMETRY\nDimension:     XY\nBounding box:  xmin: 1230745 ymin: 154142.5 xmax: 2752811 ymax: 954516.6\nProjected CRS: NAD83 / Pennsylvania South (ftUS)\n# A tibble: 24 × 3\n   NAMELSADCO        total_vuln_pop                                     geometry\n   &lt;chr&gt;                      &lt;dbl&gt;                  &lt;GEOMETRY [US_survey_foot]&gt;\n 1 Clearfield County          29522 MULTIPOINT ((1761643 552819.8), (1771676 60…\n 2 Snyder County              11506 MULTIPOINT ((2146031 512151.8), (2156983 53…\n 3 Chester County             11417 MULTIPOINT ((2465898 169818.4), (2495360 18…\n 4 Bradford County            10201 MULTIPOINT ((2337737 885991.1), (2346226 83…\n 5 Pike County                 8286 MULTIPOINT ((2712124 734907.2), (2752811 73…\n 6 Monroe County               7143 MULTIPOINT ((2596964 659216.4), (2624230 69…\n 7 Crawford County             6986 MULTIPOINT ((1230745 872213.6), (1251729 90…\n 8 Forest County               6785 MULTIPOINT ((1526711 801611.7), (1599178 79…\n 9 York County                 5669                     POINT (2367500 154142.5)\n10 Cumberland County           5348                     POINT (2109310 279890.1)\n# ℹ 14 more rows\n\n#Visualisation for sanity\n\nhospitals_final &lt;- st_join(hospitals_proj, vulnerable_tracts_proj, left = FALSE)\n\nunderserved_tract_only &lt;- vulnerable_tracts_proj %&gt;%\n  filter(GEOID %in% underserved_tract$GEOID[underserved_tract$underserved == \"Underserved\"])\n\nhospital_buffer &lt;- hospitals_final %&gt;% \n  st_buffer(dist = 79200)\n\nggplot() +\n  geom_sf(data = pa_counties, fill = \"white\", color = \"gray\") +\n  geom_sf(data = hospital_buffer, fill = \"lightblue\", alpha = 0.4) +\n  geom_sf(data = hospitals, color = \"red\", size = 2) +\n  geom_sf(data = underserved_tract_only, fill = \"pink\", colour = \"gray\" ) +\n  theme_void()\n\n\n\n\n\n\n\n\nRequired county-level statistics: - Number of vulnerable tracts: 1625 - Number of underserved tracts: 39 - Percentage of vulnerable tracts that are underserved: 4/85 - Average distance to nearest hospital for vulnerable tracts: 3.96 - Total vulnerable population: 434055\nQuestions to answer: - Which 5 counties have the highest percentage of underserved vulnerable tracts? Cameron County, Forest County, Sullivan County, Pike County, Potter County - Which counties have the most vulnerable people living far from hospitals? Clearfield County, Snyder County, Chester County - Are there any patterns in where underserved counties are located? Underserved counties are predominantly located in rural, northern and central Pennsylvania, areas with low population density, limited infrastructure, and greater distances between towns\n\n\n\nStep 7: Create Summary Table\nCreate a professional table showing the top 10 priority counties for healthcare investment.\nYour Task:\nlibrary(kableExtra)\n# Create and format priority counties table\nunderserved_tract_descend &lt;- underserved_tract %&gt;%\n  arrange(desc(nearest_hospital_miles))\n\nlibrary(kableExtra)\n\nunderserved_tract_descend &lt;- underserved_tract %&gt;%\n  st_drop_geometry() %&gt;%\n  arrange(desc(nearest_hospital_miles)) %&gt;%\n  head(10) %&gt;%\n  select(GEOID, NAMELSADCO, NAMELSAD, Total_populationE ,nearest_hospital_miles, underserved)\n\nunderserved_tract_descend %&gt;%\n  kable(\n    format = \"html\",\n    col.names = c(\"Tract GEOID\", \"County\",\"Tract\", \"Total Population\",\"Distance (mi)\", \"Status\"),\n    caption = \"Top 10 Priority Counties for Healthcare Investment\",\n    digits = 2,\n    align = \"llcl\"\n  ) %&gt;%\n  kable_styling(\n    bootstrap_options = c(\"striped\", \"hover\", \"condensed\"),\n    full_width = FALSE,\n    position = \"center\"\n  ) %&gt;%\n  row_spec(0, bold = TRUE, background = \"#2c3e50\", color = \"white\") %&gt;%\n  column_spec(1, bold = TRUE) %&gt;%\n  footnote(general = \"Source: ACS 2023. Underserved = nearest hospital &gt; 15 miles.\")\n\nTop 10 Priority Counties for Healthcare Investment\n\n\nTract GEOID\nCounty\nTract\nTotal Population\nDistance (mi)\nStatus\n\n\n\n\n42103950606\nPike County\nCensus Tract 9506.06\n6381\n25.96\nUnderserved\n\n\n42033330700\nClearfield County\nCensus Tract 3307\n2103\n25.62\nUnderserved\n\n\n42015951200\nBradford County\nCensus Tract 9512\n4852\n24.81\nUnderserved\n\n\n42029308000\nChester County\nCensus Tract 3080\n5763\n22.19\nUnderserved\n\n\n42033331000\nClearfield County\nCensus Tract 3310\n4814\n21.89\nUnderserved\n\n\n42033330800\nClearfield County\nCensus Tract 3308\n6843\n21.40\nUnderserved\n\n\n42103950503\nPike County\nCensus Tract 9505.03\n1905\n21.20\nUnderserved\n\n\n42133024001\nYork County\nCensus Tract 240.01\n5669\n20.68\nUnderserved\n\n\n42109070400\nSnyder County\nCensus Tract 704\n5585\n20.39\nUnderserved\n\n\n42097082300\nNorthumberland County\nCensus Tract 823\n4953\n20.03\nUnderserved\n\n\n\nNote: \n\n\n\n\n\n\n\n Source: ACS 2023. Underserved = nearest hospital &gt; 15 miles.\n\n\n\n\n\n\n\n\n\nRequirements: - Use knitr::kable() or similar for formatting - Include descriptive column names - Format numbers appropriately (commas for population, percentages, etc.) - Add an informative caption - Sort by priority (you decide the metric)"
+  },
+  {
+    "objectID": "labs/lab_2/lab_2.html#part-2-comprehensive-visualization",
+    "href": "labs/lab_2/lab_2.html#part-2-comprehensive-visualization",
+    "title": "Lab 2: Spatial Analysis and Visualization",
+    "section": "Part 2: Comprehensive Visualization",
+    "text": "Part 2: Comprehensive Visualization\nUsing the skills from Week 3 (Data Visualization), create publication-quality maps and charts.\n\nMap 1: County-Level Choropleth\nCreate a choropleth map showing healthcare access challenges at the county level.\nYour Task:\n\n# Create county-level access map\n#Joining county level CT data to vulnerable tract data\nunderserved_tract &lt;- st_drop_geometry(underserved_tract)\nperc_vuln_trat &lt;- left_join(demo_data_final, underserved_tract)\n\n#Summarising number of CT per County\n#Add filter so we only count number of VULNERABLE tracts\nCT_per_County &lt;- perc_vuln_trat %&gt;% \n  filter(vuln_income == \"vuln_income\" | vuln_age == \"vuln_age\") %&gt;% \n  group_by(NAMELSADCO) %&gt;% \n  summarise(\n    Number_of_ct = n()\n  )\n\nCT_per_County\n\nSimple feature collection with 67 features and 2 fields\nGeometry type: GEOMETRY\nDimension:     XY\nBounding box:  xmin: -80.51989 ymin: 39.7198 xmax: -74.77683 ymax: 42.18103\nGeodetic CRS:  NAD83\n# A tibble: 67 × 3\n   NAMELSADCO       Number_of_ct                                        geometry\n   &lt;chr&gt;                   &lt;int&gt;                                  &lt;GEOMETRY [°]&gt;\n 1 Adams County                9 MULTIPOLYGON (((-77.03122 39.80224, -77.02885 …\n 2 Allegheny County          180 MULTIPOLYGON (((-79.78506 40.40042, -79.77796 …\n 3 Armstrong County            9 MULTIPOLYGON (((-79.56745 40.57715, -79.56645 …\n 4 Beaver County              23 MULTIPOLYGON (((-80.26287 40.62011, -80.26001 …\n 5 Bedford County              8 POLYGON ((-78.65826 39.72283, -78.6338 39.7227…\n 6 Berks County               45 MULTIPOLYGON (((-75.72295 40.48971, -75.7067 4…\n 7 Blair County               20 MULTIPOLYGON (((-78.25984 40.66797, -78.26151 …\n 8 Bradford County             9 MULTIPOLYGON (((-76.78679 41.713, -76.82072 41…\n 9 Bucks County               58 MULTIPOLYGON (((-74.86049 40.12454, -74.85408 …\n10 Butler County              22 MULTIPOLYGON (((-79.95176 40.92771, -79.94769 …\n# ℹ 57 more rows\n\nvuln_tract_per_county &lt;- perc_vuln_trat %&gt;% \n  filter(underserved == \"Underserved\") %&gt;% \n  group_by(NAMELSADCO) %&gt;% \n  summarise(\n    number_of_ct = n()\n  )\n\nvuln_tract_per_county\n\nSimple feature collection with 24 features and 2 fields\nGeometry type: GEOMETRY\nDimension:     XY\nBounding box:  xmin: -80.51942 ymin: 39.72088 xmax: -74.79199 ymax: 42.00007\nGeodetic CRS:  NAD83\n# A tibble: 24 × 3\n   NAMELSADCO        number_of_ct                                       geometry\n   &lt;chr&gt;                    &lt;int&gt;                                 &lt;GEOMETRY [°]&gt;\n 1 Bradford County              2 POLYGON ((-76.53771 41.67941, -76.49344 41.60…\n 2 Cameron County               1 POLYGON ((-78.24858 41.50342, -78.24099 41.50…\n 3 Centre County                1 POLYGON ((-78.2272 40.89737, -78.22422 40.895…\n 4 Chester County               2 MULTIPOLYGON (((-75.90702 39.80072, -75.90542…\n 5 Clearfield County            8 POLYGON ((-78.63471 40.84263, -78.62212 40.83…\n 6 Crawford County              2 POLYGON ((-80.51942 41.67123, -80.51936 41.66…\n 7 Cumberland County            1 POLYGON ((-77.31678 40.16105, -77.30114 40.12…\n 8 Dauphin County               1 POLYGON ((-76.99299 40.56403, -76.99194 40.56…\n 9 Erie County                  1 POLYGON ((-80.37484 41.8908, -80.37481 41.883…\n10 Fayette County               1 POLYGON ((-79.58387 39.88562, -79.57918 39.87…\n# ℹ 14 more rows\n\n#Caclualting percentage of vulnerable tracts underserved \nCT_per_County &lt;- st_drop_geometry(CT_per_County)\nvuln_tract_per_county &lt;- st_drop_geometry(vuln_tract_per_county)\n\nperc_vuln_trat &lt;- vuln_tract_per_county %&gt;% \n  left_join(CT_per_County, by = \"NAMELSADCO\") %&gt;% \n  mutate(perc_counties_underserved = round((number_of_ct / Number_of_ct)*100, 2))\nperc_vuln_trat\n\n# A tibble: 24 × 4\n   NAMELSADCO        number_of_ct Number_of_ct perc_counties_underserved\n   &lt;chr&gt;                    &lt;int&gt;        &lt;int&gt;                     &lt;dbl&gt;\n 1 Bradford County              2            9                     22.2 \n 2 Cameron County               1            1                    100   \n 3 Centre County                1           19                      5.26\n 4 Chester County               2           32                      6.25\n 5 Clearfield County            8           18                     44.4 \n 6 Crawford County              2           14                     14.3 \n 7 Cumberland County            1           28                      3.57\n 8 Dauphin County               1           36                      2.78\n 9 Erie County                  1           51                      1.96\n10 Fayette County               1           23                      4.35\n# ℹ 14 more rows\n\n#Gives pa counties with desirable geometry the correct county name so we can merge\ncounty_choropleth &lt;- pa_counties %&gt;%\n  mutate(NAMELSADCO = str_to_title(COUNTY_NAM),\n         NAMELSADCO = paste(NAMELSADCO, \"County\")) %&gt;%\n  left_join(perc_vuln_trat, by = \"NAMELSADCO\")\n\n \n#Mapping perc_vuln_tract somehow?\n\nggplot() +\n  geom_sf(data = pa_counties, fill = \"white\", color = \"gray\") +\n  geom_sf(data = county_choropleth, aes(fill = perc_counties_underserved), colour = \"white\") +\n    scale_fill_viridis_c(\n      name = \"% Vulnerable Tract\",\n      option = \"magma\" ) +\n  geom_sf(data = hospitals, color = \"red\", size = 1) +\n\n  labs(\n    title = \"Percentage of Vulnerable Tracts Underserved by County\",\n    subtitle = \"Red points = Hospital locations\",\n    caption = \"Source: ACS 2023, PA Hospital Data. Underserved = &gt;15 miles from nearest hospital.\"\n  ) +\n  theme_void()\n\n\n\n\n\n\n\n\nRequirements: - Fill counties by percentage of vulnerable tracts that are underserved: yes - Include hospital locations as points: yes - Use an appropriate color scheme: - Include clear title, subtitle, and caption - Use theme_void() or similar clean theme - Add a legend with formatted labels\n\n\n\nMap 2: Detailed Vulnerability Map\nCreate a map highlighting underserved vulnerable tracts.\nYour Task:\n\n# Create detailed tract-level map\n\nggplot() +\n  geom_sf(data = pa_counties, fill = \"white\", color = \"gray\") +\n  geom_sf(data = hospitals, color = \"red\", size = 2) +\n  geom_sf(data = underserved_tract_only, fill = \"pink\", colour = \"black\", linewidth = 0.5 ) +\n  labs(\n    title = \"Underserved Vulnerable Census Tracts in Pennsylvania\",\n    subtitle = \"Red points = Hospitals, Pink tracts = Vulnerable and &gt;15 miles from nearest hospital\",\n    caption = \"Source: ACS 2023, PA Hospital Data\"\n  ) +\n  theme_void()\n\n\n\n\n\n\n\n\nRequirements: - Show underserved vulnerable tracts in a contrasting color: Yes - Include county boundaries for context: yes - Show hospital locations: yes - Use appropriate visual hierarchy (what should stand out?): yes - Include informative title and subtitle: tbd\n\n\n\nChart: Distribution Analysis\nCreate a visualization showing the distribution of distances to hospitals for vulnerable populations.\nYour Task:\n\n# Create distribution visualization\n\nscatter_plot &lt;- underserved_tract %&gt;% \n  filter(vuln_income == \"vuln_income\" | vuln_age == \"vuln_age\")\n\nggplot(scatter_plot, aes(x = nearest_hospital_miles, y = Total_populationE)) +\n  geom_point() +\n  geom_smooth(method = \"lm\", se = FALSE, color = \"red\")+\n  labs(x = \"Distance\", y = \"Vulnerable Population Size\") +\n  theme_minimal()\n\n\n\n\n\n\n\n\n-The scatter plot shows a weak positive relationship between distance to the nearest hospital and tract population size, with most vulnerable tracts clustered within 5 miles of a hospital. The nearly flat trend line suggests that distance to hospitals does not vary significantly with population size, though the sparse scatter beyond 15 miles highlights a small number of isolated tracts that may warrant targeted intervention."
+  },
+  {
+    "objectID": "labs/lab_2/lab_2.html#part-3-bring-your-own-data-analysis",
+    "href": "labs/lab_2/lab_2.html#part-3-bring-your-own-data-analysis",
+    "title": "Lab 2: Spatial Analysis and Visualization",
+    "section": "Part 3: Bring Your Own Data Analysis",
+    "text": "Part 3: Bring Your Own Data Analysis\nChoose your own additional spatial dataset and conduct a supplementary analysis.\n\nChallenge Options\nChoose ONE of the following challenge exercises, or propose your own research question using OpenDataPhilly data (https://opendataphilly.org/datasets/).\n\n\n\nYour Analysis\nYour Task:\n\nFind and load additional data\n\nDocument your data source\nCheck and standardize the CRS\nProvide basic summary statistics\n\n\n\nlibrary(sf)\nlibrary(tidyverse)\nlibrary(tigris)\nlibrary(tidycensus)\nlibrary(scales)\nlibrary(patchwork)\nlibrary(here)\n\n\n\n#Load datasets\n\ntransit_stops &lt;- st_read(here(\"data/Transit_Stops_(Spring_2025).shp\"))\nst_crs(transit_stops)\ncensus_tracts2 &lt;- tracts(state = \"PA\", cb = TRUE)\n\nrail_lines &lt;- c(\"MFL\", \"BSL\", \"NHSL\")\ntrolley_lines &lt;- c(\"10\", \"11\", \"13\", \"15\", \"34\", \"36\", \"101\", \"102\")\n\nsepta_stops &lt;- transit_stops %&gt;%\n  mutate(mode = case_when(\n    LineAbbr %in% rail_lines ~ \"Rail\",\n    LineAbbr %in% trolley_lines ~ \"Trolley\",\n    TRUE ~ \"Bus\"\n  ))\n\nphilly_tracts &lt;- get_acs(\n  geography = \"tract\",\n  state = \"PA\",\n  county = \"Philadelphia\",\n  variables = c(\n    total_pop = \"B01003_001\",\n    white = \"B02001_002\",\n    black = \"B02001_003\",\n    asian = \"B02001_005\",\n    hispanic = \"B03003_003\"\n  ),\n  year = 2022,\n  geometry = TRUE,\n  output = \"wide\"\n)\n\nsepta_stops &lt;- st_transform(septa_stops, st_crs(philly_tracts))\n\n#summary statistics\n\nstops_by_tract &lt;- st_join(septa_stops, philly_tracts)\n\nstops_count &lt;- stops_by_tract %&gt;%\n  st_drop_geometry() %&gt;%\n  group_by(NAME) %&gt;%\n  summarise(num_stops = n())\nstops_count\n\nQuestions to answer: - What dataset did you choose and why? SEPTA transit stop locations across Philadelphia. Public transit access is a key determinant of economic opportunity and quality of life, particularly for low-income and minority communities who are more likely to depend on public transport.\n\nWhat is the data source and date? OpenDataPhilly (opendataphilly.org), SEPTA Routes & Stops Locations dataset, Spring 2025.\nHow many features does it contain? 22,478\nWhat CRS is it in? Did you need to transform it? WGS 84 / Pseudo-Mercator, I transformed it to match the ACS tract data using st_transform()\n\n\n\nPose a research question\n\nHow equitably are SEPTA transit stops distributed across Philadelphia’s census tracts, and do disparities in access vary by racial composition?\n\n\nConduct spatial analysis\n\nUse at least TWO spatial operations to answer your research question.\nRequired operations (choose 2+): - Buffers - Spatial joins - Spatial filtering with predicates - Distance calculations - Intersections or unions - Point-in-polygon aggregation\nYour Task:\n\n# Your spatial analysis\n\n#Distance from each tract centroid to nearest transit stop\nphilly_tracts_proj &lt;- philly_tracts %&gt;%\n  st_transform(crs = 2272)\n\nsepta_stops_proj &lt;- septa_stops %&gt;%\n  st_transform(crs = 2272)\n\n#stops by census tract\nstops_by_tract &lt;- st_join(septa_stops, philly_tracts)\n\nstops_count &lt;- stops_by_tract %&gt;%\n  st_drop_geometry() %&gt;%\n  group_by(NAME) %&gt;%\n  summarise(num_stops = n())\nstops_count\n\n# A tibble: 406 × 2\n   NAME                                                  num_stops\n   &lt;chr&gt;                                                     &lt;int&gt;\n 1 Census Tract 1.01; Philadelphia County; Pennsylvania         56\n 2 Census Tract 1.02; Philadelphia County; Pennsylvania         25\n 3 Census Tract 10.01; Philadelphia County; Pennsylvania        26\n 4 Census Tract 10.02; Philadelphia County; Pennsylvania        49\n 5 Census Tract 100; Philadelphia County; Pennsylvania          16\n 6 Census Tract 101; Philadelphia County; Pennsylvania          37\n 7 Census Tract 102; Philadelphia County; Pennsylvania          14\n 8 Census Tract 103; Philadelphia County; Pennsylvania          11\n 9 Census Tract 104; Philadelphia County; Pennsylvania          12\n10 Census Tract 105; Philadelphia County; Pennsylvania          44\n# ℹ 396 more rows\n\n#join back to main data\nphilly_tracts_proj &lt;- philly_tracts_proj %&gt;%\n  left_join(st_drop_geometry(stops_count), by = \"NAME\") %&gt;%\n  mutate(num_stops = replace_na(num_stops, 0),\n         stops_per_1000 = round((num_stops / total_popE) * 1000, 2))\n\n#make centroids\ntract_centroids &lt;- philly_tracts_proj %&gt;%\n  st_centroid()\n\ndist_to_stop &lt;- st_distance(tract_centroids, septa_stops_proj)\n\ntract_centroids$nearest_stop_miles &lt;- round(apply(dist_to_stop, 1, min) / 5280, 2)\n\n\n#classify tracts by race\nphilly_race_analysis &lt;- tract_centroids %&gt;%\n  mutate(\n    majority_race = case_when(\n      whiteE / total_popE &gt; 0.5 ~ \"Majority White\",\n      blackE / total_popE &gt; 0.5 ~ \"Majority Black\",\n      asianE / total_popE &gt; 0.5 ~ \"Majority Asian\",\n      hispanicE / total_popE &gt; 0.5 ~ \"Majority Hispanic\",\n      TRUE ~ \"No Majority\"\n    )\n  )\n\n#summary statistics for race\nrace_summary &lt;- philly_race_analysis %&gt;%\n  st_drop_geometry() %&gt;%\n  group_by(majority_race) %&gt;%\n  summarise(\n    num_tracts = n(),\n    avg_stops = round(mean(num_stops, na.rm = TRUE), 2),\n    avg_stops_per_1000 = round(mean(stops_per_1000, na.rm = TRUE), 2),\n    avg_dist_nearest_stop = round(mean(nearest_stop_miles, na.rm = TRUE), 2)\n  )\n\nrace_summary\n\n# A tibble: 4 × 5\n  majority_race    num_tracts avg_stops avg_stops_per_1000 avg_dist_nearest_stop\n  &lt;chr&gt;                 &lt;int&gt;     &lt;dbl&gt;              &lt;dbl&gt;                 &lt;dbl&gt;\n1 Majority Black          145      32.1              25.2                   0.09\n2 Majority Hispan…         23      24.6               5.82                  0.08\n3 Majority White          149      40.7              14.8                   0.11\n4 No Majority              91      35.5             Inf                     0.12\n\n#map 1\nggplot() +\n  geom_sf(data = philly_tracts_proj, aes(fill = num_stops), colour = \"white\", linewidth = 0.1) +\n  scale_fill_viridis_c(name = \"Number of Stops per Census Tract\", option = \"plasma\") +\n  labs(\n    title = \"SEPTA Transit Stop Density by Census Tract\",\n    subtitle = \"Philadelphia County\"\n  ) +\n  theme_void()\n\n\n\n\n\n\n\n#map2\nphilly_race_map &lt;- philly_tracts_proj %&gt;%\n  mutate(\n    majority_race = case_when(\n      whiteE / total_popE &gt; 0.5 ~ \"Majority White\",\n      blackE / total_popE &gt; 0.5 ~ \"Majority Black\",\n      asianE / total_popE &gt; 0.5 ~ \"Majority Asian\",\n      hispanicE / total_popE &gt; 0.5 ~ \"Majority Hispanic\",\n      TRUE ~ \"No Majority\"\n    )\n  )\n\nsepta_philly &lt;- septa_stops_proj[philly_tracts_proj, ]\n\nggplot() +\n  geom_sf(data = philly_race_map, aes(fill = majority_race), colour = \"white\", linewidth = 0.1) +\n  geom_sf(data = septa_philly, size = 0.1, alpha = 0.3) +\n  labs(\n    title = \"SEPTA Stop Locations by Racial Composition\",\n    subtitle = \"Points = Transit Stops\",\n    fill = \"Majority Race\"\n  ) +\n  theme_void()\n\n\n\n\n\n\n\n#Chart 1 - distance by race\nggplot(st_drop_geometry(philly_race_analysis), aes(x = majority_race, y = nearest_stop_miles, fill = majority_race)) +\n  geom_boxplot() +\n  labs(\n    x = \"Majority Race\",\n    y = \"Distance to Nearest Stop (miles)\",\n    title = \"Distance to Nearest SEPTA Stop by Racial Composition\"\n  ) +\n  theme_minimal() +\n  theme(legend.position = \"none\")\n\n\n\n\n\n\n\n\nYour interpretation:\nSEPTA transit stops are unevenly distributed across Philadelphia’s census tracts, with notable disparities along racial lines. Majority-Black and No Majority tracts tend to have higher raw stop counts but lower stops per capita, suggesting that while transit infrastructure is physically present, it may not be proportionally serving the population. Majority-White tracts, particularly in the northeast and northwest of the city, show greater average distances to the nearest transit stop, reflecting lower transit density in more car-dependent, suburban-style neighborhoods"
+  },
+  {
+    "objectID": "labs/lab_2/lab_2.html#finally---a-few-comments-about-your-incorporation-of-feedback",
+    "href": "labs/lab_2/lab_2.html#finally---a-few-comments-about-your-incorporation-of-feedback",
+    "title": "Lab 2: Spatial Analysis and Visualization",
+    "section": "Finally - A few comments about your incorporation of feedback!",
+    "text": "Finally - A few comments about your incorporation of feedback!\nTake a few moments to clean up your markdown document and then write a line or two or three about how you may have incorporated feedback that you recieved after your first assignment."
+  },
+  {
+    "objectID": "labs/lab_2/lab_2.html#submission-requirements",
+    "href": "labs/lab_2/lab_2.html#submission-requirements",
+    "title": "Lab 2: Spatial Analysis and Visualization",
+    "section": "Submission Requirements",
+    "text": "Submission Requirements\nWhat to submit:\n\nRendered HTML document posted to your course portfolio with all code, outputs, maps, and text\n\nUse embed-resources: true in YAML so it’s a single file\nAll code should run without errors\nAll maps and charts should display correctly\n\nSubmit the correct and working links of your assignment on Canvas"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html",
+    "title": "Opening Question",
+    "section": "",
+    "text": "1— title: “Introduction to Linear Regression” subtitle: “Week 5: CPLN 5920-MUSA 5080” author: “Dr. Allison Lassiter” date: “February 16, 2026” format: revealjs: theme: simple slide-number: true chalkboard: true code-line-numbers: true incremental: false smaller: true —"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#the-general-problem",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#the-general-problem",
+    "title": "Opening Question",
+    "section": "The General Problem",
+    "text": "The General Problem\nWe observe data: counties, income, population, education, etc.\nWe believe there’s some relationship between these variables.\nStatistical learning = a set of approaches for estimating that relationship"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#formalizing-the-relationship",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#formalizing-the-relationship",
+    "title": "Opening Question",
+    "section": "Formalizing the Relationship",
+    "text": "Formalizing the Relationship\nFor any quantitative response Y and predictors X₁, X₂, … Xₚ:\n\\[Y = f(X) + \\epsilon\\]\nWhere:\n\nf = the systematic information X provides about Y\nε = random error (irreducible)"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#what-is-f",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#what-is-f",
+    "title": "Opening Question",
+    "section": "What is f?",
+    "text": "What is f?\nf represents the true relationship between predictors and outcome\n\nIt’s fixed but unknown\nIt’s what we’re trying to estimate\nDifferent X values produce different Y values through f\n\nExample:\n\nY = median income\nX = population, education, poverty rate\nf = the way these factors systematically relate to income"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#why-estimate-f",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#why-estimate-f",
+    "title": "Opening Question",
+    "section": "Why Estimate f?",
+    "text": "Why Estimate f?\nTwo main reasons:\n1. Prediction\n\nEstimate Y for new observations\nDon’t necessarily care about the exact form of f\nFocus: accuracy of predictions\n\n2. Inference\n\nUnderstand how X affects Y\nWhich predictors matter?\nWhat’s the nature of the relationship?\nFocus: interpreting the model"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#how-do-we-estimate-f",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#how-do-we-estimate-f",
+    "title": "Opening Question",
+    "section": "How Do We Estimate f?",
+    "text": "How Do We Estimate f?\nTwo broad approaches:\nParametric Methods\n\nMake an assumption about the functional form (e.g., linear)\nReduces problem to estimating a few parameters\nEasier to interpret\nThis is what we’ll focus on\n\nNon-Parametric Methods\n\nDon’t assume a specific form\nMore flexible\nRequire more data\nHarder to interpret"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#parametric-vs.-non-parametric",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#parametric-vs.-non-parametric",
+    "title": "Opening Question",
+    "section": "Parametric vs. Non-Parametric",
+    "text": "Parametric vs. Non-Parametric\n\nKey difference:\n\nParametric (blue): We assume f is linear, then estimate β₀ and β₁\nNon-parametric (green): We let the data determine the shape of f\n\n\n\n\n\n\n\nNoteWhat about deep learning?\n\n\n\nNeural networks are technically parametric (millions of parameters!), but achieve flexibility through parameter quantity rather than assuming a rigid form. We won’t cover them in this course, but they follow the same Y = f(X) + ε framework."
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#parametric-approach-linear-regression",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#parametric-approach-linear-regression",
+    "title": "Opening Question",
+    "section": "Parametric Approach: Linear Regression",
+    "text": "Parametric Approach: Linear Regression\nThe assumption: Relationship between X and Y is linear\n\\[Y \\approx \\beta_0 + \\beta_1X_1 + \\beta_2X_2 + ... + \\beta_pX_p\\]\nThe task: Estimate the β coefficients using our sample data\nThe method: Ordinary Least Squares (OLS)"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#why-linear-regression",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#why-linear-regression",
+    "title": "Opening Question",
+    "section": "Why Linear Regression?",
+    "text": "Why Linear Regression?\nAdvantages:\n\nSimple and interpretable\nWell-understood properties\nWorks remarkably well for many problems\nFoundation for more complex methods\n\nLimitations:\n\nAssumes linearity (we’ll test this)\nSensitive to outliers\nMakes several assumptions (we’ll check these)"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#prediction-vs-inference",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#prediction-vs-inference",
+    "title": "Opening Question",
+    "section": "Prediction vs Inference",
+    "text": "Prediction vs Inference\nThe same model serves different purposes:\n\n\nInference\n\n“Does education affect income?”\nFocus on coefficients\nStatistical significance matters\nUnderstand mechanisms\n\n\nPrediction\n\n“What’s County Y’s income?”\nFocus on accuracy\nPrediction intervals matter\nDon’t need to understand why\n\n\n\nToday: We’ll do both, but emphasize prediction"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#example-prediction",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#example-prediction",
+    "title": "Opening Question",
+    "section": "Example: Prediction",
+    "text": "Example: Prediction\nGovernment use case:\nCensus misses people in hard-to-count areas. Can we predict:\n\nIncome for areas with poor survey response?\nPopulation for planning purposes?\nResource needs based on demographics?\n\nThe model doesn’t explain WHY these relationships exist, but if predictions are accurate, they can be useful for policy"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#example-inference",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#example-inference",
+    "title": "Opening Question",
+    "section": "Example: Inference",
+    "text": "Example: Inference\nResearch use case:\nUnderstanding gentrification:\n\nWhich neighborhood characteristics explain income change?\nHow much does education matter vs. proximity to downtown?\nAre policy interventions associated with outcomes?\n\nHere we care about the coefficients and what they tell us about mechanisms"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#connection-to-week-2-algorithmic-bias",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#connection-to-week-2-algorithmic-bias",
+    "title": "Opening Question",
+    "section": "Connection to Week 2: Algorithmic Bias",
+    "text": "Connection to Week 2: Algorithmic Bias\nRemember the healthcare algorithm that discriminated?\nThe model: Predicted healthcare needs using costs as proxy\nTechnically: Probably had good R², low prediction error (good “fit”)\nEthically: Learned and amplified existing discrimination\n\n\n\n\n\n\nImportantCritical Point\n\n\n\nA model can be statistically “good” while being ethically terrible for decision-making."
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#start-with-data-and-visualization",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#start-with-data-and-visualization",
+    "title": "Opening Question",
+    "section": "Start with Data and Visualization",
+    "text": "Start with Data and Visualization\nLet’s apply these concepts to PA counties:\n\n\nGetting data from the 2018-2022 5-year ACS\n\n\n`geom_smooth()` using formula = 'y ~ x'"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#what-do-we-see",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#what-do-we-see",
+    "title": "Opening Question",
+    "section": "What Do We See?",
+    "text": "What Do We See?\nBefore fitting any model, discuss the visualization:\n\nGenerally positive relationship\nConsiderable scatter (not deterministic)\nMost counties are small (clustered left)\nOne large county with surprisingly low income\nWider confidence band at higher populations\n\nQuestion: What does this tell us about f(X)?"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#fit-the-model",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#fit-the-model",
+    "title": "Opening Question",
+    "section": "Fit the Model",
+    "text": "Fit the Model\n\n\nCode\nmodel1 &lt;- lm(median_incomeE ~ total_popE, data = pa_data)\nsummary(model1)\n\n\n\nCall:\nlm(formula = median_incomeE ~ total_popE, data = pa_data)\n\nResiduals:\n   Min     1Q Median     3Q    Max \n-39536  -6013  -1868   5075  44196 \n\nCoefficients:\n                Estimate   Std. Error t value             Pr(&gt;|t|)    \n(Intercept) 62855.819808  1760.477709  35.704 &lt; 0.0000000000000002 ***\ntotal_popE      0.021477     0.005192   4.137             0.000103 ***\n---\nSignif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\nResidual standard error: 11820 on 65 degrees of freedom\nMultiple R-squared:  0.2084,    Adjusted R-squared:  0.1962 \nF-statistic: 17.11 on 1 and 65 DF,  p-value: 0.0001032"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#interpreting-coefficients",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#interpreting-coefficients",
+    "title": "Opening Question",
+    "section": "Interpreting Coefficients",
+    "text": "Interpreting Coefficients\nIntercept (β₀) = $62,855\n\nExpected income when population = 0\nNot usually meaningful in practice\n\nSlope (β₁) = $0.02\n\nFor each additional person, income increases by $0.02\nMore useful: For every 1,000 people, income increases by ~$20\n\nIs this relationship real?\n\nNull hypothesis is β₁ = 0 (population has no relationship to income) (Note: note, not testing causality, like “population has no effect on income”)\np-value &lt; 0.001 → Very unlikely to see this if true β₁ = 0\nWe can reject the null hypothesis"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#the-holy-grail-concept",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#the-holy-grail-concept",
+    "title": "Opening Question",
+    "section": "The “Holy Grail” Concept",
+    "text": "The “Holy Grail” Concept\n\n\nOur estimates are just that: estimates of the true (unknown) parameters\nKey insight:\n\nRed line = true relationship (unknowable)\nBlue line = our estimate from this sample (n) of the total population (N)\nDifferent samples (n) of the same population (N) → slightly different blue lines\nStandard errors quantify this uncertainty"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#statistical-significance",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#statistical-significance",
+    "title": "Opening Question",
+    "section": "Statistical Significance",
+    "text": "Statistical Significance\nThe logic:\n\nNull hypothesis (H₀): β₁ = 0 (no relationship)\nOur estimate: β₁ = 0.02\nQuestion: Could we get 0.02 just by chance if H₀ is true?\n\nt-statistic: How many standard errors away from 0?\n\nBigger |t| = more confidence the relationship is real\nRule of thumb: |t| &gt; 3 indicates strong evidence the relationship is real\n\np-value: Probability of seeing our estimate if H₀ is true\n\nSmall p → reject H₀, conclude relationship exists"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#how-good-is-this-model",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#how-good-is-this-model",
+    "title": "Opening Question",
+    "section": "How Good is This Model?",
+    "text": "How Good is This Model?\nTwo key questions:\n\nHow well does it fit the data we used? (in-sample fit)\nHow well would it predict new data? (out-of-sample performance)\n\nThese are NOT the same thing!"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#in-sample-fit-r²",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#in-sample-fit-r²",
+    "title": "Opening Question",
+    "section": "In-Sample Fit: R²",
+    "text": "In-Sample Fit: R²\nR² = 0.208\n“21% of variation in income is explained by population”\nIs this good?\n\nDepends on your goal!\nFor prediction: Moderate\nFor inference: Shows population matters, but other factors exist\n\nR² alone doesn’t tell us if the model is trustworthy"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#the-problem-overfitting",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#the-problem-overfitting",
+    "title": "Opening Question",
+    "section": "The Problem: Overfitting",
+    "text": "The Problem: Overfitting\nThree scenarios:\n\nUnderfitting: Model too simple (high bias)\nGood fit: Captures pattern without noise\nOverfitting: Memorizes training data (high variance)"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#overfitting-in-regression",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#overfitting-in-regression",
+    "title": "Opening Question",
+    "section": "Overfitting in Regression",
+    "text": "Overfitting in Regression\n\n\n`geom_smooth()` using formula = 'y ~ x'\n\n\n\n\n\n\n\n\n\nThe danger: High R² doesn’t mean good predictions!"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#traintest-split",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#traintest-split",
+    "title": "Opening Question",
+    "section": "Train/Test Split",
+    "text": "Train/Test Split\nSolution: Hold out some data to test predictions\n\n\nCode\nset.seed(123)\nn &lt;- nrow(pa_data)\n\n# 70% training, 30% testing\ntrain_indices &lt;- sample(1:n, size = 0.7 * n)\ntrain_data &lt;- pa_data[train_indices, ]\ntest_data &lt;- pa_data[-train_indices, ]\n\n# Fit on training data only\nmodel_train &lt;- lm(median_incomeE ~ total_popE, data = train_data)\n\n# Predict on test data\ntest_predictions &lt;- predict(model_train, newdata = test_data)"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#evaluate-predictions",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#evaluate-predictions",
+    "title": "Opening Question",
+    "section": "Evaluate Predictions",
+    "text": "Evaluate Predictions\n\n\nCode\n# Calculate prediction error (RMSE)\nrmse_test &lt;- sqrt(mean((test_data$median_incomeE - test_predictions)^2))\nrmse_train &lt;- summary(model_train)$sigma\n\ncat(\"Training RMSE:\", round(rmse_train, 0), \"\\n\")\n\n\nTraining RMSE: 12893 \n\n\nCode\ncat(\"Test RMSE:\", round(rmse_test, 0), \"\\n\")\n\n\nTest RMSE: 9536 \n\n\n\n\n\n\n\n\nNoteInterpreting RMSE\n\n\n\nOn new data (test set), our predictions are off by ~$9,500 on average. Is this level of error acceptable for policy decisions?"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#cross-validation",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#cross-validation",
+    "title": "Opening Question",
+    "section": "Cross-Validation",
+    "text": "Cross-Validation\nBetter approach: Multiple train/test splits\n\nGives more stable estimate of true prediction performance"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#cross-validation-in-action",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#cross-validation-in-action",
+    "title": "Opening Question",
+    "section": "Cross-Validation in Action",
+    "text": "Cross-Validation in Action\n\n\nCode\nlibrary(caret)\n\n\nLoading required package: lattice\n\n\n\nAttaching package: 'caret'\n\n\nThe following object is masked from 'package:purrr':\n\n    lift\n\n\nCode\n# 10-fold cross-validation\ntrain_control &lt;- trainControl(method = \"cv\", number = 10)\n\ncv_model &lt;- train(median_incomeE ~ total_popE,\n                  data = pa_data,\n                  method = \"lm\",\n                  trControl = train_control)\n\ncv_model$results\n\n\n  intercept     RMSE  Rsquared      MAE   RMSESD RsquaredSD    MAESD\n1      TRUE 12577.76 0.5643826 8859.865 5609.002  0.2997098 2238.042\n\n\nKey Metrics (Averaged Across 10 Folds)\n\nRMSE: Typical prediction error (~$12,578) - penalizes large errors more\nR²: % of variation explained (0.564)\nMAE: Average absolute error (~$8,860) - easier to interpret"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#when-can-we-trust-this-model",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#when-can-we-trust-this-model",
+    "title": "Opening Question",
+    "section": "When Can We Trust This Model?",
+    "text": "When Can We Trust This Model?\nLinear regression makes assumptions. If violated:\n\nCoefficients may be biased\nStandard errors wrong\nPredictions unreliable\n\nWe must check diagnostics before trusting any model"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-1-linearity",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-1-linearity",
+    "title": "Opening Question",
+    "section": "Assumption 1: Linearity",
+    "text": "Assumption 1: Linearity\nWhat we assume: Relationship is actually linear\nHow to check: Residual plot\n\n\nCode\npa_data$residuals &lt;- residuals(model1)\npa_data$fitted &lt;- fitted(model1)\n\nggplot(pa_data, aes(x = fitted, y = residuals)) +\n  geom_point() +\n  geom_hline(yintercept = 0, color = \"red\", linetype = \"dashed\") +\n  labs(title = \"Residual Plot\", x = \"Fitted Values\", y = \"Residuals\") +\n  theme_minimal()"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#reading-residual-plots",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#reading-residual-plots",
+    "title": "Opening Question",
+    "section": "Reading Residual Plots",
+    "text": "Reading Residual Plots\n\n\nGood\n\nRandom scatter\nPoints around 0\nConstant spread\n\n\nBad\n\nCurved pattern\nModel missing something\nPredictions biased\n\n\n\n\n\n\n\n\n\nImportantWhy This Matters for Prediction\n\n\n\nLinearity violations hurt predictions, not just inference:\n\nIf the true relationship is curved and you fit a straight line, you’ll systematically underpredict in some regions and overpredict in others\nBiased predictions in predictable ways (not random errors!)\nResidual plots should show random scatter - any pattern means your model is missing something systematic"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-2-constant-variance",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-2-constant-variance",
+    "title": "Opening Question",
+    "section": "Assumption 2: Constant Variance",
+    "text": "Assumption 2: Constant Variance\nHeteroscedasticity: Variance changes across X\nImpact: Standard errors are wrong → p-values misleading\n\n\n\n\n\n\nWarningWhat Heteroskedasticity Tells You\n\n\n\nOften a symptom of model misspecification:\n\nModel fits well for some values (e.g., small counties) but poorly for others (large counties)\nMay indicate missing variables that matter more at certain X values\nAsk: “What’s different about observations with large residuals?”\n\nExample: Population alone predicts income well in rural counties, but large urban counties need additional variables (education, industry) to predict accurately."
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#heteroskedasticity-visualized",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#heteroskedasticity-visualized",
+    "title": "Opening Question",
+    "section": "Heteroskedasticity Visualized",
+    "text": "Heteroskedasticity Visualized\n\nKey Insight: Adding the right predictor can fix heteroscedasticity"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#formal-test-breusch-pagan",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#formal-test-breusch-pagan",
+    "title": "Opening Question",
+    "section": "Formal Test: Breusch-Pagan",
+    "text": "Formal Test: Breusch-Pagan\n\n\nCode\nlibrary(lmtest)\n\n\nLoading required package: zoo\n\n\n\nAttaching package: 'zoo'\n\n\nThe following objects are masked from 'package:base':\n\n    as.Date, as.Date.numeric\n\n\nCode\nbptest(model1)\n\n\n\n    studentized Breusch-Pagan test\n\ndata:  model1\nBP = 27.481, df = 1, p-value = 0.0000001587\n\n\nInterpretation:\n\np &gt; 0.05: Constant variance assumption OK\np &lt; 0.05: Evidence of heteroscedasticity\n\nIf detected, solutions:\n\nTransform Y (try log(income))\nRobust standard errors\nAdd missing variables\nAccept it (point predictions still OK for some prediction goals) – hetroscedasticity will affect predcition of the error, not the coefficients."
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-normality-of-residuals",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-normality-of-residuals",
+    "title": "Opening Question",
+    "section": "Assumption: Normality of Residuals",
+    "text": "Assumption: Normality of Residuals\nWhat we assume: Residuals are normally distributed\nWhy it matters:\n\nLess critical for point predictions (unbiased regardless)\nImportant for confidence intervals and prediction intervals\nNeeded for valid hypothesis tests (t-tests, F-tests)"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-3-no-multicollinearity",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-3-no-multicollinearity",
+    "title": "Opening Question",
+    "section": "Assumption 3: No Multicollinearity",
+    "text": "Assumption 3: No Multicollinearity\nFor multiple regression: Predictors shouldn’t be too correlated\n\n\nCode\nlibrary(car)\nvif(model1)  # Variance Inflation Factor\n\n# Rule of thumb: VIF &gt; 10 suggests problems\n# Not relevant with only 1 predictor!\n\n\nWhy it matters: Coefficients become unstable, hard to interpret"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-4-no-influential-outliers",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#assumption-4-no-influential-outliers",
+    "title": "Opening Question",
+    "section": "Assumption 4: No Influential Outliers",
+    "text": "Assumption 4: No Influential Outliers\nNot all outliers are problems - only those with high leverage AND large residuals\n\n\n\nVisual Diagnostic\n\n\n\n\n\n\n\n\n\n\n\n\nIdentify Influential Points\n\n\n# A tibble: 2 × 4\n  NAME                              total_popE median_incomeE cooks_d\n  &lt;chr&gt;                                  &lt;dbl&gt;          &lt;dbl&gt;   &lt;dbl&gt;\n1 Philadelphia County, Pennsylvania    1593208          57537   5.95 \n2 Allegheny County, Pennsylvania       1245310          72537   0.399\n\n\nInterpretation:\n\nCook’s D &gt; 4/n = potentially influential\nHigh leverage + large residual = pulls regression line"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#what-to-do-with-influential-points",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#what-to-do-with-influential-points",
+    "title": "Opening Question",
+    "section": "What To Do With Influential Points",
+    "text": "What To Do With Influential Points\n\n\n\n\n\n\nTipInvestigation Strategy\n\n\n\n\nInvestigate: Why is this observation unusual? (data error? truly unique?)\nReport: Always note influential observations in your analysis\nSensitivity check: Refit model without them - do conclusions change?\nDon’t automatically remove: They might represent real, important cases\n\nFor policy: An influential county might need special attention, not exclusion!\n\n\n\n\n\n\n\n\nImportantConnection to Algorithmic Bias\n\n\n\nHigh-influence observations in demographic could represent marginalized communities or unique populations. Automatically removing them can erase important populations from analysis and lead to biased policy decisions.\nAlways investigate before removing!"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#adding-more-predictors",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#adding-more-predictors",
+    "title": "Opening Question",
+    "section": "Adding More Predictors",
+    "text": "Adding More Predictors\nMaybe population alone isn’t enough:\n\n\nGetting data from the 2018-2022 5-year ACS\n\n\n\nCall:\nlm(formula = median_incomeE ~ total_popE + percent_collegeE + \n    poverty_rateE, data = pa_data_full)\n\nResiduals:\n   Min     1Q Median     3Q    Max \n-32939  -4473  -1098   3861  27672 \n\nCoefficients:\n                    Estimate  Std. Error t value             Pr(&gt;|t|)    \n(Intercept)      60893.86796  1589.24122  38.316 &lt; 0.0000000000000002 ***\ntotal_popE           0.06657     0.03356   1.984               0.0517 .  \npercent_collegeE     0.04710     0.14916   0.316               0.7532    \npoverty_rateE       -0.36503     0.07749  -4.711             0.000014 ***\n---\nSignif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\nResidual standard error: 8610 on 63 degrees of freedom\nMultiple R-squared:  0.5931,    Adjusted R-squared:  0.5738 \nF-statistic: 30.61 on 3 and 63 DF,  p-value: 0.000000000002485"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#log-transformations",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#log-transformations",
+    "title": "Opening Question",
+    "section": "Log Transformations",
+    "text": "Log Transformations\nIf relationship is curved, try transforming:\n\n\nCode\n# Compare linear vs log\nmodel_linear &lt;- lm(median_incomeE ~ total_popE, data = pa_data)\nmodel_log &lt;- lm(median_incomeE ~ log(total_popE), data = pa_data)\n\nsummary(model_log)\n\n\n\nCall:\nlm(formula = median_incomeE ~ log(total_popE), data = pa_data)\n\nResiduals:\n   Min     1Q Median     3Q    Max \n-27231  -5780  -2118   3953  40638 \n\nCoefficients:\n                Estimate Std. Error t value   Pr(&gt;|t|)    \n(Intercept)        -4867      12374  -0.393      0.695    \nlog(total_popE)     6276       1074   5.842 0.00000018 ***\n---\nSignif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\nResidual standard error: 10760 on 65 degrees of freedom\nMultiple R-squared:  0.3443,    Adjusted R-squared:  0.3342 \nF-statistic: 34.13 on 1 and 65 DF,  p-value: 0.0000001805\n\n\nCode\n# Check which residual plot looks better\n\n\nInterpretation changes: Log models show percentage relationships"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#categorical-variables",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#categorical-variables",
+    "title": "Opening Question",
+    "section": "Categorical Variables",
+    "text": "Categorical Variables\n\n\nCode\n# Create metro/non-metro indicator\npa_data &lt;- pa_data %&gt;%\n  mutate(metro = ifelse(total_popE &gt; 500000, 1, 0))\n\nmodel3 &lt;- lm(median_incomeE ~ total_popE + metro, data = pa_data)\nsummary(model3)\n\n\n\nCall:\nlm(formula = median_incomeE ~ total_popE + metro, data = pa_data)\n\nResiduals:\n   Min     1Q Median     3Q    Max \n-28824  -6732  -2885   7672  26622 \n\nCoefficients:\n                Estimate   Std. Error t value             Pr(&gt;|t|)    \n(Intercept) 64924.857892  1659.821786  39.116 &lt; 0.0000000000000002 ***\ntotal_popE     -0.005290     0.008047  -0.657             0.513257    \nmetro       29865.529225  7319.309190   4.080             0.000127 ***\n---\nSignif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\nResidual standard error: 10610 on 64 degrees of freedom\nMultiple R-squared:  0.3718,    Adjusted R-squared:  0.3522 \nF-statistic: 18.94 on 2 and 64 DF,  p-value: 0.0000003456\n\n\nR creates dummy variables automatically"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#summary-the-regression-workflow",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#summary-the-regression-workflow",
+    "title": "Opening Question",
+    "section": "Summary: The Regression Workflow",
+    "text": "Summary: The Regression Workflow\n\nUnderstand the framework: What’s f? What’s the goal?\nVisualize first: Does a linear model make sense?\nFit the model: Estimate coefficients\nEvaluate performance: Train/test split, cross-validation\nCheck assumptions: Residual plots, VIF, outliers\nImprove if needed: Transformations, more variables\nConsider ethics: Who could be harmed by this model?\n\n\n\nKey Takeaways\nStatistical Learning:\n\nWe’re estimating f(X), the systematic relationship\nParametric methods assume a form (we chose linear)\n\nTwo purposes:\n\nInference: understand relationships\nPrediction: forecast new values\n\nModel evaluation:\n\nIn-sample fit ≠ out-of-sample performance\nBeware overfitting!\n\nDiagnostics matter:\n\nAlways check assumptions\nPlots reveal what R² hides"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#the-task",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#the-task",
+    "title": "Opening Question",
+    "section": "The Task",
+    "text": "The Task\nPredict median home value (B25077_001) for PA counties using any combination of predictors\nBuild the model with lowest 10-fold cross-validated RMSE"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#available-predictors",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#available-predictors",
+    "title": "Opening Question",
+    "section": "Available Predictors",
+    "text": "Available Predictors\n\n\nCode\nchallenge_data &lt;- get_acs(\n  geography = \"county\",\n  state = \"PA\",\n  variables = c(\n    home_value = \"B25077_001\",      # YOUR TARGET\n    total_pop = \"B01003_001\",       # Total population\n    median_income = \"B19013_001\",   # Median household income\n    median_age = \"B01002_001\",      # Median age\n    percent_college = \"B15003_022\", # Bachelor's degree or higher\n    median_rent = \"B25058_001\",     # Median rent\n    poverty_rate = \"B17001_002\"     # Population in poverty\n  ),\n  year = 2022,\n  output = \"wide\"\n)\n\nggplot(challenge_data, aes(x = home_valueE, y = median_incomeE)) +\n  geom_point(alpha = 0.6, size = 3) +\n  geom_smooth(method = \"lm\", se = TRUE, color = \"steelblue\") +\n  labs(\n    title = \"Population vs Median Income in PA Counties\",\n    x = \"Total Population\", \n    y = \"Median Household Income\"\n  ) +\n  scale_x_continuous(labels = comma) +\n  scale_y_continuous(labels = dollar) +\n  theme_minimal()\n\n\nmy_model1 &lt;- lm(home_valueE ~ median_incomeE, data = challenge_data)\nsummary(my_model1)\n\n##Residuals\nchallenge_data$residuals &lt;- residuals(my_model1)\nchallenge_data$fitted &lt;- fitted(my_model1)\n\nggplot(challenge_data, aes(x = fitted, y = residuals)) +\n  geom_point() +\n  geom_hline(yintercept = 0, color = \"red\", linetype = \"dashed\") +\n  labs(title = \"Residual Plot\", x = \"Fitted Values\", y = \"Residuals\") +\n  theme_minimal()\n\n\nmy_train_control &lt;- trainControl(method = \"cv\", number = 10)\n\nmy_cv_model &lt;- train(home_valueE ~ median_incomeE,\n                     data = challenge_data,\n                     method = \"lm\",\n                     trControl = train_control)\n\nmy_cv_model$results\n\nsummary(my_cv_model)\n\n\nmy_model_linear &lt;- lm(home_valueE ~ median_incomeE, data = challenge_data)\nsummary(my_model_linear)\nmy_model_log &lt;- lm(home_valueE ~ log(median_incomeE), data = challenge_data)\n\nsummary(my_model_log)\n\n\nmodel2 &lt;- lm(home_valueE ~ median_incomeE , data = challenge_data)"
+  },
+  {
+    "objectID": "classroom_exercise/Week 5/week5-complete-slides.html#rules-strategy",
+    "href": "classroom_exercise/Week 5/week5-complete-slides.html#rules-strategy",
+    "title": "Opening Question",
+    "section": "Rules & Strategy",
+    "text": "Rules & Strategy\nYou can:\n\nUse any combination of predictors (time permitting, you can fetch more)\nTry log transformations: log(total_popE)\nEngineer new categorical features\nRemove influential outliers (but document which!)\n\nYou must:\n\nUse 10-fold cross-validation to report final RMSE\nDo a full diagnostic check (residual plot, Cook’s D, or Breusch-Pagan)\nBe ready to explain your model in 2 minutes\n\n\n\n\n\n\n\nTipHints\n\n\n\n\nStart simple (one predictor), check diagnostics\nIncome and rent are probably highly correlated (multicollinearity!)\nTry log transformation if relationship looks curved\nDon’t forget to remove NAs: na.omit(challenge_data)"
   }
 ]
