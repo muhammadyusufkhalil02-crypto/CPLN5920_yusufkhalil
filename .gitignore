@@ -38,3 +38,9 @@ Thumbs.db
 *~
 /.quarto/
 **/*.quarto_ipynb
+
+# =========================
+# Large data files
+# =========================
+labs/lab_3/data/public_cases_fc.dbf
+labs/lab_3/opa_properties_public.geojson
