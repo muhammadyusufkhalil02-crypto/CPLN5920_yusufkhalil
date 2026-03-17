@@ -1013,5 +1013,96 @@
     "title": "Midterm Challenge: Philadelphia Housing Price Prediction",
     "section": "Feature Discussion",
     "text": "Feature Discussion\nStructural features dominate individual coefficient magnitude:\n\nTotal livable area is the strongest continuous predictor — each additional square foot adds $114.6212 to sale price\nBathrooms carry a larger premium than bedrooms, consistent with the hedonic literature\nExterior/interior condition shows large jumps between ratings, reflecting buyer sensitivity to visible property quality. Additionally interior condition seems to hold more weight with signifcant positive coefficients\n\nSpatial features capture neighbourhood and census level amenities:\n\nCrime distance is positive meaning homes further from crime incidents command higher prices\nTransit distance effect depends on context. Proximity is an amenity in wealthier areas but may proxy for noise/density in others which would be captured by our fixed effects. That being said, when transit refers specifically to tram and railway stations, a more interpretable relationship emerges. As average distance to transit increases, the price of homes increase.\n\nFixed effects (census tract + catchment) provide the single largest improvement in model fit (R^2 jumps from 0.487 to 0.728), absorbing unobserved census quality, school quality, and local market conditions that individual variables cannot capture. We found that this was an exceptional proxy for traditional ACS demographic variables, improving our R^2 far greater than when we simply added indiviudal ACS variables. Additionally, we felt that joining the sales data to acs data resulted in many rows having repeated and identical ACS numbers. While this would be fine for our prediction model it would violate the independence of observations assumptions rendering our regression results to be misleading.\n\n\nCode\n####Phase 6: Model Diagnostics\n\n#Residual Plot \n## Final Model \nplot(cv_final$finalModel, which = 1)\n\n\n\n\n\n\n\n\n\nCode\n##The residuals vs fitted plot reveals a funnel pattern, indicating heteroskedasticity in our model. Prediction accuracy varies systematically across the price distribution: the model performs well for higher-value properties but exhibits substantially greater variance for lower-value homes, where unobserved differences in housing quality and condition are likely driving the increased error.\n\n\n##Q-Q Plot ~ Checking whether errors are normally distributed \nplot(cv_final$finalModel, which = 2)\n\n\n\n\n\n\n\n\n\nCode\n##The Q-Q plot shows deviation from the diagonal at both tails, indicating heavier tails than a normal distribution would predict. This means the model produces more extreme errors than expected, both large overpredictions and underpredictions occur more frequently than normality assumes. However, with over 35,000 observations, the Central Limit Theorem ensures that coefficient estimates and standard errors remain approximately valid despite non-normal residuals. Hence the normality of our residuals is not a primary concern since our number of obervations are so high. \n\n##Cook's-Distance\nplot(cv_final$finalModel, which = 4)\n\n\n\n\n\n\n\n\n\nCode\n#We now removed the outliers highlighted in Cook's distance \n# Fit the model\ntemp_model &lt;- lm(sale_price ~ crime_avg_dist + transit_avg_dist + exterior_condition + interior_condition+\n                   number_of_bedrooms + number_of_bathrooms + number_stories + \n                   total_livable_area + as.factor(NAME) + as.factor(es_id),\n                 data = home_price_resi_filter_FINAL,\n                 na.action = na.exclude)\n\n# Attach Cook's distance to the ORIGINAL data (na.exclude keeps alignment)\nhome_price_resi_filter_FINAL$cooks &lt;- cooks.distance(temp_model)\n\n# Filter\nhome_price_resi_filter_FINAL_COOK_TEST &lt;- home_price_resi_filter_FINAL %&gt;%\n  filter(is.na(cooks) | cooks &lt;= 0.004)\n\n\n\n# Final Model Filtering Outliers Identified by Cook's Test \n#Spatial + Structural + Fixed Effects (CT + Catchment) + Filtered Cookes (FINAL MODEL)\n\ncv_final_cooks &lt;- train(sale_price ~  crime_avg_dist + transit_avg_dist  + exterior_condition + interior_condition +             number_of_bedrooms + number_of_bathrooms + number_stories + total_livable_area +\n            as.factor(es_id) + as.factor(NAME),\n             data = home_price_resi_filter_FINAL_COOK_TEST,\n             method = \"lm\", trControl = ctrl,\n             na.action = na.omit\n)\ncv_final_cooks\n\n\nfinal_model_c &lt;- lm(sale_price ~  crime_avg_dist + transit_avg_dist  + exterior_condition + illegal_avg_dist + interior_condition + number_of_bedrooms + number_of_bathrooms + number_stories + total_livable_area +\n            as.factor(es_id) + as.factor(NAME),\n             data = home_price_resi_filter_FINAL_COOK_TEST)\n\n\nsummary(final_model_c)\n\n##The Cook's distance plot identified a small number of observations exerting disproportionate influence on the model's coefficient estimates. These are properties where unusual combinations of predictors and sale price were pulling the regression surface away from the broader pattern. We addressed this by filtering observations with Cook's distance exceeding 0.004, removing the most influential outliers and refitting the model on the cleaned dataset. This resulted in an improvement from an RMSE of $96,210.97 to $95,652.17. The diagnostic plots were re-examined post-filtering to confirm improved model behaviour.\n\n\nResiduals vs Fitted The residuals vs fitted plot reveals a funnel pattern, indicating heteroskedasticity in our model. Prediction accuracy varies systematically across the price distribution: the model performs well for higher-value properties but exhibits substantially greater variance for lower-value homes, where unobserved differences in housing quality and condition are likely driving the increased error.\nQ-Q Plot The Q-Q plot shows deviation from the diagonal at both tails, indicating heavier tails than a normal distribution would predict. This means the model produces more extreme errors than expected, both large overpredictions and underpredictions occur more frequently than normality assumes. However, with over 35,000 observations, the Central Limit Theorem ensures that coefficient estimates and standard errors remain approximately valid despite non-normal residuals. Hence the normality of our residuals is not a primary concern since our number of obervations are so high.\nCook’s Distance The Cook’s distance plot identified a small number of observations exerting disproportionate influence on the model’s coefficient estimates. These are properties where unusual combinations of predictors and sale price were pulling the regression surface away from the broader pattern. We addressed this by filtering observations with Cook’s distance exceeding 0.004, removing the most influential outliers and refitting the model on the cleaned dataset. This resulted in an improvement from an RMSE of $96,210.97 to $95,652.17. The diagnostic plots were re-examined post-filtering to confirm improved model behaviour.\n#Phase 7: Conclusions & Recommendations\n1-What is your final model’s accuracy? Our final model achieves an RMSE of $95,652 and MAE of $61,553 under 10-fold cross-validation, with an R² of 0.722. In practical terms, the model explains approximately 72% of the variation in Philadelphia residential sale prices, with a typical prediction error of around $61,500. Relative to our structural-only baseline model, this represents a 33% reduction in RMSE and a 42% reduction in MAE, driven primarily by the inclusion of census tract and school catchment fixed effects alongside interior and exterior condition variables.\n2-Which features matter most for Philadelphia prices? It seems like the structural features of the homes matter most. In the succession of our models, we found that adding more structural features such as exterior and interior conditions lowered our RMSE, even with the same spatial features attached to the model. The number of bathrooms, stories, and bedrooms also had statistically significant p values. This could be due to the fact that the majority of housing structures in Philadelphia are older and therefore finding one with both a sound interior and exterior is likely higher valued.\n3-Which neighborhoods are hardest to predict? A few of the hardest neighborhoods to predict were University City, Rittenhouse Square and Spruce Hill. This could be due to a lot of factors included the mix of housing structure types that may be valued differently. For example, Spruce Hill has a mix of historical Victorian homes and attached row homes, and within recent years have introduced luxury apartments and converted multi-units. Rittenhouse Square was likely hard to predict due to rapidly changing neighborhood features and maybe more hyperlocal spatial features. This may include the proximity to certain parks in the neighborhood and neighborhood blocks closest to nightlife activity such as bars and restaurants. Overall, many neighborhoods in Philadelphia have great variation and may change from a block-to-block level. Therefore, one model will not be able to capture home sale prices in the neighborhood overall.\n4-Equity concerns? Like any model, hedonic pricing models can perpetuate biases about neighborhoods or certain populations within geographic areas. Because the model is based on historical housing prices, it can reflect and reinforce existing inequalities related to factors like race, income, and past disinvestment. For example, the model may predict lower sale prices in some neighborhoods not because the homes are actually worth less, but because of bias embedded in the data. As a result, the model can end up undervaluing certain areas and continuing patterns of inequality.\n5-Limitations  Our model has a few key limitations. First, we can’t capture things like architectural or upward neighbourhood trajectory.These all influence what a buyer is willing to pay but don’t exist in the OPA data. Second, we didn’t account for inflation across the 2023–2025 period, so some of the price variation might just be changes over time rather than actual differences in property value. Third, almost a third of the original dataset was made up of $0–$500 transactions, which are likely sheriff sales, interfamily transfers, and other non-market transactions. We removed these, but the fact that they make up such a large share of the data raises questions about the overall quality of the OPA records."
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#research-question",
+    "href": "labs/lab_3/presentation/presentation.html#research-question",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Research Question",
+    "text": "Research Question\nOur consultancy firm, Codes and Concepts, has been tasked with improving the city of Philadelphia’s Automated Valuation Model (AVM) for the Office of Property Assessment. Our team developed a predictive model to further understand the effect of spatial and structural features on home sale prices. In this process, we explored home sale prices across the region identifying spatial trends and areas that may be challenging to predict."
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#data-sources",
+    "href": "labs/lab_3/presentation/presentation.html#data-sources",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Data Sources",
+    "text": "Data Sources\n\nProperty sales (2023-2025)\nCensus ACS (ACS5, 2023)\nOpenDataPhilly (Transit, Crime, Elementary Catchment Zones, 311 Calls, Neighborhood Boundaries)"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#where-are-expensive-homes",
+    "href": "labs/lab_3/presentation/presentation.html#where-are-expensive-homes",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Where Are Expensive Homes?",
+    "text": "Where Are Expensive Homes?"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#what-drives-prices",
+    "href": "labs/lab_3/presentation/presentation.html#what-drives-prices",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "What Drives Prices?",
+    "text": "What Drives Prices?"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#what-drives-prices-1",
+    "href": "labs/lab_3/presentation/presentation.html#what-drives-prices-1",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "What Drives Prices?",
+    "text": "What Drives Prices?"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#model-comparison",
+    "href": "labs/lab_3/presentation/presentation.html#model-comparison",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Model Comparison",
+    "text": "Model Comparison\n\n\n\nEach layer improves prediction\n\n\nModel\nPredictors\nR²\nAdj. R²\n\n\n\n\n1: Structural\n6\n0.455\n0.455\n\n\n2: Structural + Spatial\n10\n0.487\n0.487\n\n\n3: Structural + Spatial + Neighbourhood & Catchment FE\n11\n0.716\n0.714\n\n\n4: Structural+ Spatial + Neighbourhood & Catchment FE + Interaction\n11\n0.682\n0.679\n\n\n5: Structural + Spatial + CT & Catchment FE\n10\n0.728\n0.724\n\n\n6: Structural + Spatial + CT & Catchment + Polynomial\n11\n0.701\n0.697\n\n\n7: Structural + Spatial + CT & Catchment FE - Cook's Outliers (Final)\n11\n0.731\n0.727\n\n\n\n\n\nInstead of using individual ACS predictors we found that using census tracts as fixed effects held better predictive capacity. In additition to this, we included elementary school boundaries."
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#model-comparison-1",
+    "href": "labs/lab_3/presentation/presentation.html#model-comparison-1",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Model Comparison",
+    "text": "Model Comparison"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#top-predictors",
+    "href": "labs/lab_3/presentation/presentation.html#top-predictors",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Top Predictors",
+    "text": "Top Predictors\n\n\n\n\n\nPredictor\nβ\np-value\n\n\n\n\nexterior_condition8\n-254625.71\n0.008\n\n\nnumber_of_bathrooms\n25983.87\n&lt; 0.001\n\n\nnumber_stories\n11680.23\n&lt; 0.001\n\n\nnumber_of_bedrooms\n9001.98\n&lt; 0.001\n\n\ntotal_livable_area\n115.16\n&lt; 0.001\n\n\ncrime_avg_dist\n35.54\n&lt; 0.001\n\n\nillegal_avg_dist\n20.85\n&lt; 0.001"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#model-performance",
+    "href": "labs/lab_3/presentation/presentation.html#model-performance",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Model Performance",
+    "text": "Model Performance\n\n\n\n\n\nMetric\nBaseline\nFinal Model\nImprovement\n\n\n\n\nRMSE\n$143,310\n$95,637\n33.3%\n\n\nMAE\n$105,462\n$61,505\n41.7%\n\n\nR-Squared\n37.6%\n72.2%\n+34.6 pts"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#hardest-to-predict",
+    "href": "labs/lab_3/presentation/presentation.html#hardest-to-predict",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Hardest to Predict",
+    "text": "Hardest to Predict"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#recommendations",
+    "href": "labs/lab_3/presentation/presentation.html#recommendations",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Recommendations",
+    "text": "Recommendations\n\nData quality is critical\nHigh-variance neighborhoods require deeper investigation\nConsider separate models by smaller geographic boundaries"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#limitations-and-next-steps",
+    "href": "labs/lab_3/presentation/presentation.html#limitations-and-next-steps",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Limitations and Next Steps",
+    "text": "Limitations and Next Steps\n\nHistoric character and architectural charm are unquantifiable\nNot accounting for inflation\nFurther exploration into the $0-$500 transcations that made up almost 1/3 of the data set\nInclude more spatial features to account for spatial autocorrelation and general high variance in the data set"
+  },
+  {
+    "objectID": "labs/lab_3/presentation/presentation.html#questions",
+    "href": "labs/lab_3/presentation/presentation.html#questions",
+    "title": "Hedonic Housing Price Model: Philadelphia",
+    "section": "Questions?",
+    "text": "Questions?\nThank you"
   }
 ]

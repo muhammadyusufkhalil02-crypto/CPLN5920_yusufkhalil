@@ -1,0 +1,272 @@
+---
+title: "Hedonic Housing Price Model: Philadelphia"
+subtitle: ""
+author: "Dalanda Jalloh, Huda Abdelnur, Yusuf Khalil"
+date: today
+format:
+  revealjs:
+    theme: simple
+    slide-number: true
+    transition: fade
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| include: false
+
+library(tidyverse)
+library(sf)
+library(tmap)
+library(caret)
+library(ggplot2)
+
+load("analysis_objects_final.RData")
+
+```
+
+
+
+## Research Question
+Our consultancy firm, Codes and Concepts, has been tasked with improving the city of Philadelphia's Automated Valuation Model (AVM) for the **Office of Property Assessment**. Our team developed a predictive model to further understand the effect of spatial and structural features on home sale prices. In this process, we explored home sale prices across the region identifying spatial trends and areas that may be challenging to predict. 
+
+
+## Data Sources
+
+- Property sales (2023-2025)
+- Census ACS (ACS5, 2023)
+- OpenDataPhilly (Transit, Crime, Elementary Catchment Zones, 311 Calls, Neighborhood Boundaries)
+
+## Where Are Expensive Homes?
+
+```{r}
+#| echo: false
+# Map visualization here
+
+library(tmap)
+tmap_mode("plot")
+
+tm_shape(sale_price_census) +
+  tm_polygons(fill = "median_price",
+              fill.scale = tm_scale_intervals(style = "jenks"),
+              fill.legend = tm_legend(title = "Median Sale Price ($)",
+                                      position = tm_pos_out("right", "center"))) +
+  tm_title("Median Sale Price by Census Tract") +
+  tm_credits("Source: Philadelphia Property Sales, 2023-2025, ACS 2023",
+             position = c("right", "bottom")) +
+  tm_layout(
+attr.position = c("right", "bottom"),
+inner.margins = c(0.04, 0.04, 0.04, 0.4))
+
+```
+
+
+## What Drives Prices?
+
+```{r}
+#| echo: false
+# Best scatter plot or faceted visualization here
+ggplot(home_price_resi_filter_FINAL, aes(x = total_livable_area, y = sale_price)) +
+  geom_point(alpha = 0.2, size = 0.5, color = "steelblue") +
+  scale_y_continuous(labels = scales::dollar, limits = c(0, 800000)) +
+  geom_smooth(method = "lm", color = "red", linetype = "dashed", se = FALSE)+
+  labs(
+    title = "Sale Price vs. Total Livable Area",
+    x = "Total Livable Area",
+    y = "Sale Price ($)",
+    caption = "Source: Philadelphia Property Sales, 2023-2025"
+  ) +
+  theme_minimal()
+
+```
+
+
+
+## What Drives Prices?
+
+```{r}
+ggplot(home_price_resi_filter_FINAL, aes(x = transit_avg_dist, y = sale_price)) +
+  geom_point(alpha = 0.2, size = 0.5, color = "steelblue") +
+  scale_y_continuous(labels = scales::dollar, limits = c(0, 800000)) +
+  geom_smooth(method = "lm", color = "red", linetype = "dashed", se = FALSE)+
+  labs(
+    title = "Sale Price vs. Avg Distance to 5 Transit Stop",
+    x = "Avg Distance ft to 5 Transit Stops",
+    y = "Sale Price ($)",
+    caption = "Source: Philadelphia Property Sales, 2023-2025"
+  ) +
+  theme_minimal()
+```
+
+
+## Model Comparison
+
+```{r}
+#| echo: false
+# Results table here
+#| echo: false
+library(kableExtra)
+
+
+model_names <- c("1: Structural", "2: Structural + Spatial", "3: Structural + Spatial + Neighbourhood & Catchment FE", 
+                 "4: Structural+ Spatial + Neighbourhood & Catchment FE + Interaction", "5: Structural + Spatial + CT & Catchment FE",
+                 "6: Structural + Spatial + CT & Catchment + Polynomial", "7: Structural + Spatial + CT & Catchment FE - Cook's Outliers (Final)")
+
+models <- list(reg1, reg2, reg3, reg4, reg5, reg6, final_model_c)
+
+comparison <- data.frame(
+  Model = model_names,
+  Predictors = c(6, 10, 11, 11, 10, 11, 11),
+  R_Squared = sapply(models, function(m) round(summary(m)$r.squared, 3)),
+  Adj_R_Squared = sapply(models, function(m) round(summary(m)$adj.r.squared, 3))
+)
+
+kable(comparison, 
+      col.names = c("Model", "Predictors", "R²", "Adj. R²"),
+      align = "lccc",
+      caption = "Each layer improves prediction") %>%
+  kable_styling(font_size = 20, full_width = FALSE) %>%
+  row_spec(7, bold = TRUE, background = "#27AE60")
+
+
+```
+
+Instead of using individual ACS predictors we found that using census tracts as fixed effects held better predictive capacity. In additition to this, we included elementary school boundaries.
+
+## Model Comparison
+```{r}
+ggplot(cv_final$pred, aes(x = obs, y = pred)) +
+  geom_point(alpha = 0.1, size = 0.5, color = "steelblue") +
+  geom_smooth(method = "lm", color = "red", linetype = "dashed", se = FALSE) +
+  scale_x_continuous(labels = scales::dollar) +
+  scale_y_continuous(labels = scales::dollar) +
+  coord_cartesian(xlim = c(0, 800000), ylim = c(0, 800000)) +
+  labs(
+    title = "Predicted vs Actual Sale Price (10-Fold CV)",
+    x = "Observed Sale Price",
+    y = "Predicted Sale Price"
+  ) +
+  theme_minimal()
+```
+
+
+
+
+## Top Predictors
+
+```{r}
+#| echo: false
+coefs <- summary(final_model_c)$coefficients
+coef_df <- data.frame(
+  Variable = rownames(coefs),
+  Coefficient = coefs[, 1],
+  P_Value = coefs[, 4]
+) %>%
+  filter(Variable %in% c("exterior_condition8",
+                          "number_of_bathrooms",
+                          "number_stories",
+                          "number_of_bedrooms",
+                          "total_livable_area",
+                          "crime_avg_dist",
+                          "illegal_avg_dist"))
+
+# Remove intercept and fixed effect dummies
+coef_df <- coef_df %>%
+  filter(!grepl("Intercept|as.factor", Variable)) %>%
+  mutate(
+    Abs_Coef = abs(Coefficient),
+    Coefficient = round(Coefficient, 2),
+    P_Value = ifelse(P_Value < 0.001, "< 0.001", round(P_Value, 3))
+  ) %>%
+  arrange(desc(Abs_Coef)) %>%
+  select(-Abs_Coef)
+
+kable(coef_df,
+      col.names = c("Predictor", "β", "p-value"),
+      align = "lcc",
+      row.names = FALSE,
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                font_size = 20, 
+                full_width = FALSE) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white") %>%
+  column_spec(2, bold = TRUE, color = "#2C3E50")
+
+```
+
+## Model Performance
+```{r}
+model_performance <- data.frame(
+  Metric = c("RMSE", "MAE", "R-Squared"),
+  Baseline = c("$143,310", "$105,462", "37.6%"),
+  Final_Model = c("$95,637", "$61,505", "72.2%"),
+  Improvement = c("33.3%", "41.7%", "+34.6 pts")
+)
+
+model_performance %>%
+  kable(align = c("l", "c", "c", "c"),
+        col.names = c("Metric", "Baseline", "Final Model", "Improvement")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),
+                full_width = FALSE) %>%
+  row_spec(0, bold = TRUE, background = "#2C3E50", color = "white") %>%
+  column_spec(3, bold = TRUE, color = "#27AE60")
+```
+## Hardest to Predict
+
+```{r}
+#| echo: false
+
+#########
+# calculate mean absolute residual per neighborhood
+reg3_temp <- lm(sale_price ~ crime_avg_dist + transit_avg_dist + total_livable_area +
+           number_of_bedrooms + number_of_bathrooms + number_stories + 
+           as.factor(MAPNAME),
+           data = home_price_resi_filter_hood, na.action = na.exclude)
+
+home_price_resi_filter_hood$residuals <- residuals(reg3_temp)
+
+neighborhood_error <- aggregate(abs(residuals) ~ MAPNAME, 
+                                data = home_price_resi_filter_hood, 
+                                FUN = mean)
+
+# sort and take top 15 hardest to predict
+neighborhood_error <- neighborhood_error[order(neighborhood_error$`abs(residuals)`, 
+                                               decreasing = TRUE), ]
+top15 <- head(neighborhood_error, 15)
+
+# plot
+dotchart(top15$`abs(residuals)`,
+         labels = top15$MAPNAME,
+         main = "Top 15 Hardest to Predict Neighborhoods",
+         xlab = "Mean Absolute Residual ($)",
+         pch = 16,
+         color = "#27AE60")
+
+abline(v = 0, col = "red", lty = 2)
+
+```
+
+
+## Recommendations
+
+* Data quality is critical
+* High-variance neighborhoods require deeper investigation 
+* Consider separate models by smaller geographic boundaries  
+
+
+## Limitations and Next Steps
+
+* Historic character and architectural charm are unquantifiable
+* Not accounting for inflation 
+* Further exploration into the $0-$500 transcations that made up almost 1/3 of the data set 
+* Include more spatial features to account for spatial autocorrelation and general high variance in the data set 
+
+
+
+
+## Questions?
+
+Thank you
+
+
