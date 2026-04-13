@@ -20,6 +20,8 @@ website:
             text: "Lab 3: Hedonic Housing Price Model"
           - href: labs/lab_3/presentation/presentation.qmd
             text: "Lab 3: Presentation"
+          - href: labs/lab_4/lab_4.qmd
+            text: "Lab 4: Spatial Predictive Modelling"
 format:
   html:
     theme: cosmo

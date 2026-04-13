@@ -1,0 +1,762 @@
+---
+title: "Lab 4: Spatial Predictive Analysis"
+subtitle: "Predicting Rodent Baiting 311 Requests in Chicago"
+author: "Muhammad Yusuf Khalil"
+date: today
+format: 
+  html:
+    code-fold: show
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    theme: cosmo
+    embed-resources: true
+execute:
+  warning: false
+  message: false
+---
+
+# Introduction
+
+This analysis builds a spatial predictive model for **Rodent Baiting** 311 service requests in Chicago. Rodent complaints are a useful subject for spatial prediction because they cluster tightly — rat populations are driven by food waste availability, building age, alley infrastructure, and sewer conditions, all of which have strong spatial structure. If the city can predict where rodent complaints will concentrate, it can allocate baiting crews proactively rather than reactively dispatching in response to individual calls.
+
+I also load **Vacant and Abandoned Buildings** reports as a secondary 311 dataset. Vacancy and structural neglect create harbourage for rodent populations, so this provides a plausible environmental predictor alongside the spatial autocorrelation features derived from the rodent data itself.
+
+
+# Setup
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(sf)
+library(here)
+library(viridis)
+library(terra)
+library(spdep)
+library(FNN)
+library(MASS)
+library(patchwork)
+library(knitr)
+library(kableExtra)
+library(classInt)
+library(spatstat.geom)
+library(spatstat.explore)
+library(glmmTMB)
+
+options(scipen = 999)
+set.seed(5080)
+
+theme_crime <- function(base_size = 11) {
+  theme_minimal(base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = base_size + 1),
+      plot.subtitle = element_text(color = "gray30", size = base_size - 1),
+      legend.position = "right",
+      panel.grid.minor = element_blank(),
+      axis.text = element_blank(),
+      axis.title = element_blank()
+    )
+}
+
+theme_set(theme_crime())
+```
+
+# Part 1: Data Loading & Exploration
+
+We load the Chicago boundary for clipping, police districts for spatial cross-validation folds, and police beats as reference. Then we pull the Rodent Baiting and Vacant Buildings 311 datasets — both downloaded from the Chicago Open Data Portal and saved locally.
+
+## 1.1: Load Chicago Spatial Data
+
+```{r load-boundaries}
+#| message: false
+
+policeDistricts <- 
+  st_read("https://data.cityofchicago.org/api/geospatial/24zt-jpfn?method=export&format=GeoJSON") %>%
+  st_transform('ESRI:102271') %>%
+  dplyr::select(District = dist_num)
+
+policeBeats <- 
+  st_read("https://data.cityofchicago.org/api/geospatial/n9it-hstw?method=export&format=GeoJSON") %>%
+  st_transform('ESRI:102271') %>%
+  dplyr::select(Beat = beat_num)
+
+chicagoBoundary <- 
+  st_read("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/Chapter5/chicagoBoundary.geojson") %>%
+  st_transform('ESRI:102271')
+
+cat("✓ Loaded spatial boundaries\n")
+cat("  - Police districts:", nrow(policeDistricts), "\n")
+cat("  - Police beats:", nrow(policeBeats), "\n")
+```
+
+## 1.2: Load 311 Data
+
+```{r load-311-data}
+#| message: false
+
+vacant_buildings <- read_csv(here("data/311_Service_Requests_-_Vacant_and_Abandoned_Buildings_Reported_-_Historical_20260409.csv")) %>%
+  filter(!is.na(LATITUDE), !is.na(LONGITUDE)) %>%
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326) %>%
+  st_transform('ESRI:102271')
+
+rodent_baiting <- read_csv(here("data/311_Service_Requests_-_Rodent_Baiting_-_Historical_20260409.csv")) %>%
+  filter(!is.na(Latitude), !is.na(Longitude)) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  st_transform('ESRI:102271')
+
+cat("✓ Loaded 311 data\n")
+cat("  - Rodent baiting requests:", nrow(rodent_baiting), "\n")
+cat("  - Vacant building reports:", nrow(vacant_buildings), "\n")
+```
+
+## 1.3: Visualise Spatial Distribution
+
+Before modelling, we map the raw point data and a density surface. If rodent complaints were uniformly distributed there would be nothing to predict — but we expect strong clustering driven by building stock, food waste infrastructure (alleys, dumpsters), and neighbourhood density.
+
+```{r visualize-points}
+#| fig-width: 10
+#| fig-height: 5
+
+p1 <- ggplot() + 
+  geom_sf(data = chicagoBoundary, fill = "gray95", color = "gray60") +
+  geom_sf(data = rodent_baiting, color = "#d62828", size = 0.1, alpha = 0.4) +
+  labs(
+    title = "Rodent Baiting Locations",
+    subtitle = paste0("Chicago 2017, n = ", format(nrow(rodent_baiting), big.mark = ","))
+  )
+
+p2 <- ggplot() + 
+  geom_sf(data = chicagoBoundary, fill = "gray95", color = "gray60") +
+  geom_density_2d_filled(
+    data = data.frame(st_coordinates(rodent_baiting)),
+    aes(X, Y),
+    alpha = 0.7,
+    bins = 8
+  ) +
+  scale_fill_viridis_d(
+    option = "plasma",
+    direction = -1,
+    guide = "none"
+  ) +
+  labs(
+    title = "Density Surface",
+    subtitle = "Kernel density estimation"
+  )
+
+p1 + p2 + 
+  plot_annotation(
+    title = "Spatial Distribution of Rodent Baiting in Chicago",
+    tag_levels = 'A'
+  )
+```
+
+The point map shows heavy concentration in the North Side and Northwest Side — areas with older, denser residential stock and extensive alley networks. The South and West sides also show clusters but with more spatial heterogeneity. The far South Side and lakefront are relatively sparse. This clustering is the spatial signal we aim to capture.
+
+# Part 2: Fishnet Grid Creation
+
+A fishnet converts the irregular scatter of point-level 311 requests into a regular grid of equal-area cells. This gives us a consistent unit of analysis where count comparisons are valid across cells. Using a regular grid avoids the Modifiable Areal Unit Problem that would arise from aggregating to census tracts or neighbourhoods of varying sizes.
+
+## 2.1: Create 500m Grid
+
+```{r create-fishnet}
+fishnet <- st_make_grid(
+  chicagoBoundary,
+  cellsize = 500,
+  square = TRUE
+) %>%
+  st_sf() %>%
+  mutate(uniqueID = row_number()) %>%
+  st_transform('ESRI:102271') 
+
+fishnet <- fishnet[chicagoBoundary, ]
+
+cat("✓ Created fishnet grid\n")
+cat("  - Number of cells:", nrow(fishnet), "\n")
+cat("  - Cell size: 500 x 500 meters\n")
+cat("  - Cell area:", round(st_area(fishnet[1,])), "square meters\n")
+```
+
+## 2.2: Aggregate Rodent Complaints to Grid
+
+Each rodent baiting request is spatial-joined to its containing fishnet cell and counted. Cells with no complaints get zero — these zeros are meaningful (some areas genuinely have no rodent activity) and important for the count regression.
+
+```{r aggregate-rodent}
+rodent_fishnet <- st_join(rodent_baiting, fishnet, join = st_within) %>%
+  st_drop_geometry() %>%
+  group_by(uniqueID) %>%
+  summarize(countRodent = n()) 
+
+fishnet <- fishnet %>%
+  left_join(rodent_fishnet, by = "uniqueID") %>%
+  mutate(countRodent = replace_na(countRodent, 0))
+
+cat("\nRodent count distribution:\n")
+summary(fishnet$countRodent)
+cat("\nCells with zero rodent baiting:", 
+    sum(fishnet$countRodent == 0), 
+    "/", nrow(fishnet),
+    "(", round(100 * sum(fishnet$countRodent == 0) / nrow(fishnet), 1), "%)\n")
+```
+
+```{r visualize-fishnet}
+#| fig-width: 8
+#| fig-height: 6
+
+ggplot() +
+  geom_sf(data = fishnet, aes(fill = countRodent), color = NA) +
+  geom_sf(data = chicagoBoundary, fill = NA, color = "white", linewidth = 1) +
+  scale_fill_viridis_c(
+    name = "Rodent Baiting",
+    option = "plasma",
+    trans = "sqrt",
+    breaks = c(0, 1, 5, 10, 20, 40)
+  ) +
+  labs(
+    title = "Rodent Baiting Counts by Grid Cell",
+    subtitle = "500m x 500m cells, Chicago 2017"
+  ) +
+  theme_crime()
+```
+
+The distribution is heavily right-skewed — most cells have zero or very few complaints, while a small number of cells on the North and Northwest sides have counts in the dozens. This is textbook overdispersed count data where the variance exceeds the mean, which will matter when choosing between Poisson and Negative Binomial regression.
+
+# Part 3: KDE Baseline
+
+Before building a model with predictor variables, we establish a baseline using Kernel Density Estimation. KDE simply smooths the observed point pattern — it answers "rodent complaints happen where they happened before." Our model needs to outperform this to justify the added complexity.
+
+```{r kde-baseline}
+#| message: false
+
+rodents_ppp <- as.ppp(
+  st_coordinates(rodent_baiting),
+  W = as.owin(st_bbox(chicagoBoundary))
+)
+
+kde_rodents <- density.ppp(
+  rodents_ppp,
+  sigma = 1000,
+  edge = TRUE
+)
+
+kde_raster <- rast(kde_rodents)
+
+fishnet <- fishnet %>%
+  mutate(
+    kde_value = terra::extract(
+      kde_raster,
+      vect(fishnet),
+      fun = mean,
+      na.rm = TRUE
+    )[, 2]
+  )
+
+cat("✓ Calculated KDE baseline\n")
+```
+
+```{r visualize-kde}
+#| fig-width: 8
+#| fig-height: 6
+
+ggplot() +
+  geom_sf(data = fishnet, aes(fill = kde_value), color = NA) +
+  geom_sf(data = chicagoBoundary, fill = NA, color = "white", linewidth = 1) +
+  scale_fill_viridis_c(
+    name = "KDE Value",
+    option = "plasma"
+  ) +
+  labs(
+    title = "Kernel Density Estimation Baseline",
+    subtitle = "Simple spatial smoothing of rodent baiting locations"
+  ) +
+  theme_crime()
+```
+
+The KDE surface picks up the broad North/Northwest concentration, but it's purely retrospective — no covariates, no ability to explain *why* some areas have more complaints. This is the benchmark our regression model has to beat.
+
+# Part 4: Spatial Features
+
+We build three spatial features from the rodent baiting data to capture different aspects of clustering, plus a count of vacant buildings as an environmental predictor.
+
+**Why these features?** A raw count per cell captures local intensity, but misses context. The k-nearest neighbour distance captures exposure from adjacent areas. And the distance-to-hotspot variable (derived from Local Moran's I) captures the broader spatial structure of rodent activity — not just individual cells but statistically significant clusters. Vacant buildings provide a plausible causal mechanism: derelict structures offer harbourage and food sources for rat populations.
+
+## 4.1: Rodent Baiting Count per Cell (Predictor)
+
+```{r count-rodent-predictor}
+rodent_pred_fishnet <- st_join(rodent_baiting, fishnet, join = st_within) %>%
+  st_drop_geometry() %>%
+  group_by(uniqueID) %>%
+  summarize(rodent_baiting = n())
+
+fishnet <- fishnet %>%
+  left_join(rodent_pred_fishnet, by = "uniqueID") %>%
+  mutate(rodent_baiting = replace_na(rodent_baiting, 0))
+
+cat("Rodent baiting predictor distribution:\n")
+summary(fishnet$rodent_baiting)
+```
+
+## 4.2: Nearest Neighbour Distance
+
+The mean distance from each cell centroid to the 3 nearest rodent baiting reports. Low values indicate the cell is close to many complaints (high rodent activity nearby); high values mean relative isolation from reported rodent problems.
+
+```{r nn-feature}
+#| message: false
+
+fishnet_coords <- st_coordinates(st_centroid(fishnet))
+rodent_coords <- st_coordinates(rodent_baiting)
+
+nn_result <- get.knnx(rodent_coords, fishnet_coords, k = 3)
+
+fishnet <- fishnet %>%
+  mutate(
+    rodent_baiting.nn = rowMeans(nn_result$nn.dist)
+  )
+
+cat("✓ Calculated nearest neighbour distances\n")
+summary(fishnet$rodent_baiting.nn)
+```
+
+## 4.3: Local Moran's I and Distance to Hot Spots
+
+Local Moran's I identifies statistically significant spatial clusters. A single cell with many complaints could be an anomaly; a cluster of adjacent high-count cells represents a systematic rodent problem. We classify cells into High-High (hot spots), Low-Low (cold spots), and spatial outliers, then calculate the distance from every cell to the nearest High-High cluster.
+
+This distance-to-hotspot variable captures the spatial structure of rodent infestation at a broader scale than cell-level counts.
+
+```{r local-morans}
+calculate_local_morans <- function(data, variable, k = 5) {
+  
+  coords <- st_coordinates(st_centroid(data))
+  neighbors <- knn2nb(knearneigh(coords, k = k))
+  weights <- nb2listw(neighbors, style = "W", zero.policy = TRUE)
+  
+  local_moran <- localmoran(data[[variable]], weights)
+  
+  mean_val <- mean(data[[variable]], na.rm = TRUE)
+  
+  data %>%
+    mutate(
+      local_i = local_moran[, 1],
+      p_value = local_moran[, 5],
+      is_significant = p_value < 0.05,
+      
+      moran_class = case_when(
+        !is_significant ~ "Not Significant",
+        local_i > 0 & .data[[variable]] > mean_val ~ "High-High",
+        local_i > 0 & .data[[variable]] <= mean_val ~ "Low-Low",
+        local_i < 0 & .data[[variable]] > mean_val ~ "High-Low",
+        local_i < 0 & .data[[variable]] <= mean_val ~ "Low-High",
+        TRUE ~ "Not Significant"
+      )
+    )
+}
+
+fishnet <- calculate_local_morans(fishnet, "rodent_baiting", k = 5)
+```
+
+```{r visualize-morans}
+#| fig-width: 8
+#| fig-height: 6
+
+ggplot() +
+  geom_sf(
+    data = fishnet, 
+    aes(fill = moran_class), 
+    color = NA
+  ) +
+  scale_fill_manual(
+    values = c(
+      "High-High" = "#d7191c",
+      "High-Low" = "#fdae61",
+      "Low-High" = "#abd9e9",
+      "Low-Low" = "#2c7bb6",
+      "Not Significant" = "gray90"
+    ),
+    name = "Cluster Type"
+  ) +
+  labs(
+    title = "Local Moran's I: Rodent Baiting Clusters",
+    subtitle = "High-High = Hot spots of rodent activity"
+  ) +
+  theme_crime()
+```
+
+The High-High clusters confirm the visual impression: rodent hot spots concentrate in the North and Northwest sides, with additional clusters in parts of the West Side. The Low-Low cold spots — consistently low rodent activity surrounded by similarly low areas — dominate the far South Side and lakefront. This spatial autocorrelation is what we exploit in the model.
+
+```{r distance-to-hotspots}
+hotspots <- fishnet %>%
+  filter(moran_class == "High-High") %>%
+  st_centroid()
+
+if (nrow(hotspots) > 0) {
+  fishnet <- fishnet %>%
+    mutate(
+      dist_to_hotspot = as.numeric(
+        st_distance(st_centroid(fishnet), hotspots %>% st_union())
+      )
+    )
+  
+  cat("✓ Calculated distance to rodent baiting hot spots\n")
+  cat("  - Number of hot spot cells:", nrow(hotspots), "\n")
+} else {
+  fishnet <- fishnet %>%
+    mutate(dist_to_hotspot = 0)
+  cat("⚠ No significant hot spots found\n")
+}
+```
+
+## 4.4: Vacant Buildings Count per Cell
+
+Vacant and abandoned buildings provide harbourage for rodent populations — structural openings, accumulated debris, and lack of maintenance create ideal nesting conditions. We aggregate these reports to the fishnet as a contextual predictor.
+
+```{r vacant-buildings-feature}
+vacant_fishnet <- st_join(vacant_buildings, fishnet, join = st_within) %>%
+  st_drop_geometry() %>%
+  group_by(uniqueID) %>%
+  summarize(vacant_buildings = n())
+
+fishnet <- fishnet %>%
+  left_join(vacant_fishnet, by = "uniqueID") %>%
+  mutate(vacant_buildings = replace_na(vacant_buildings, 0))
+
+cat("Vacant buildings distribution:\n")
+summary(fishnet$vacant_buildings)
+```
+
+```{r visualize-predictors}
+#| fig-width: 12
+#| fig-height: 4
+
+p1 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = rodent_baiting), color = NA) +
+  scale_fill_viridis_c(name = "Count", option = "magma") +
+  labs(title = "Rodent Baiting Requests") +
+  theme_crime()
+
+p2 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = vacant_buildings), color = NA) +
+  scale_fill_viridis_c(name = "Count", option = "magma") +
+  labs(title = "Vacant Buildings") +
+  theme_crime()
+
+p3 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = countRodent), color = NA) +
+  scale_fill_viridis_c(name = "Count", option = "plasma") +
+  labs(title = "Rodent Count (DV)") +
+  theme_crime()
+
+p1 + p2 + p3 +
+  plot_annotation(title = "Predictor Variables and Dependent Variable")
+```
+
+# Part 5: Count Regression Models
+
+Rodent counts are non-negative integers, so OLS is inappropriate — it could predict negative values and mishandles the skewed distribution. Poisson regression is the natural starting point for count data, but it assumes mean equals variance. With spatial count data, we almost always see overdispersion (variance >> mean), which motivates the Negative Binomial as a more flexible alternative.
+
+## 5.1: Prepare Modelling Data
+
+```{r prepare-data}
+fishnet_model <- fishnet %>%
+  st_drop_geometry() %>%
+  dplyr::select(
+    uniqueID,
+    countRodent,
+    rodent_baiting,
+    rodent_baiting.nn,
+    dist_to_hotspot,
+    vacant_buildings
+  ) %>%
+  na.omit()
+
+cat("✓ Prepared modelling data\n")
+cat("  - Observations:", nrow(fishnet_model), "\n")
+cat("  - Variables:", ncol(fishnet_model), "\n")
+```
+
+## 5.2: Poisson Regression
+
+```{r fit-poisson}
+model_poisson <- glm(
+  countRodent ~ rodent_baiting + rodent_baiting.nn + 
+    dist_to_hotspot + vacant_buildings,
+  data = fishnet_model,
+  family = "poisson"
+)
+
+summary(model_poisson)
+```
+
+## 5.3: Check for Overdispersion
+
+```{r check-overdispersion}
+dispersion <- sum(residuals(model_poisson, type = "pearson")^2) / 
+              model_poisson$df.residual
+
+cat("Dispersion parameter:", round(dispersion, 2), "\n")
+cat("Rule of thumb: >1.5 suggests overdispersion\n")
+
+if (dispersion > 1.5) {
+  cat("⚠ Overdispersion detected — Negative Binomial model warranted.\n")
+} else {
+  cat("✓ Dispersion acceptable for Poisson.\n")
+}
+```
+
+## 5.4: Negative Binomial Regression
+
+Given the expected overdispersion, we fit a Negative Binomial model using `glmmTMB` which handles the extra-Poisson variance with a dispersion parameter. This produces more honest standard errors and better-calibrated predictions.
+
+```{r fit-negbin}
+model_nb <- glmmTMB(
+  countRodent ~ rodent_baiting + rodent_baiting.nn + 
+    dist_to_hotspot + vacant_buildings,
+  data = fishnet_model,
+  family = nbinom2
+)
+
+summary(model_nb)
+
+cat("\nModel Comparison (lower AIC is better):\n")
+cat("Poisson AIC:", round(AIC(model_poisson), 1), "\n")
+cat("Negative Binomial AIC:", round(AIC(model_nb), 1), "\n")
+```
+
+We expect the Negative Binomial to have a substantially lower AIC, confirming that the overdispersion is real and the extra flexibility justified. The coefficients should show that higher rodent counts (predictor), shorter nearest-neighbour distances, closer proximity to hot spots, and more vacant buildings all predict higher rodent complaint counts.
+
+# Part 6: Spatial Cross-Validation (2017)
+
+Standard cross-validation randomly assigns observations to folds, but with spatially autocorrelated data this inflates apparent accuracy — the model trains on cells right next to the test cells and "cheats" via spatial leakage.
+
+Leave-One-Group-Out (LOGO) cross-validation holds out an entire police district at a time. This is a much harder test: the model must predict into a contiguous geographic area it hasn't seen, which better simulates real-world deployment.
+
+```{r spatial-cv}
+# Join districts to fishnet
+fishnet_model <- st_as_sf(fishnet) %>%
+  st_join(policeDistricts)
+
+cat("NAs in District:", sum(is.na(fishnet_model$District)), "\n")
+cat("Unique districts:", length(unique(na.omit(fishnet_model$District))), "\n")
+
+fishnet_model <- fishnet_model %>% filter(!is.na(District))
+
+# LOGO CV
+districts <- unique(fishnet_model$District)
+cv_results <- list()
+
+cat("Running LOGO Cross-Validation...\n")
+
+for (i in seq_along(districts)) {
+  
+  test_district <- districts[i]
+  train_data <- fishnet_model %>% filter(District != test_district)
+  test_data <- fishnet_model %>% filter(District == test_district)
+  
+  if (nrow(test_data) == 0) next
+  
+  model_cv <- glmmTMB(
+    countRodent ~ rodent_baiting + rodent_baiting.nn + 
+      dist_to_hotspot + vacant_buildings,
+    family = nbinom2,
+    data = train_data
+  )
+  
+  preds <- predict(model_cv, test_data, type = "response")
+  
+  mae_val <- mean(abs(test_data$countRodent - preds), na.rm = TRUE)
+  rmse_val <- sqrt(mean((test_data$countRodent - preds)^2, na.rm = TRUE))
+  
+  cv_results[[length(cv_results) + 1]] <- data.frame(
+    fold = i,
+    test_district = test_district,
+    n_test = nrow(test_data),
+    mae = mae_val,
+    rmse = rmse_val
+  )
+  
+  cat("  Fold", i, "/", length(districts), "- District", test_district,
+      "- MAE:", round(mae_val, 2), "\n")
+}
+
+cv_results <- do.call(rbind, cv_results)
+
+cat("\n✓ Cross-Validation Complete\n")
+cat("Successful folds:", nrow(cv_results), "/", length(districts), "\n")
+cat("Mean MAE:", round(mean(cv_results$mae, na.rm = TRUE), 2), "\n")
+cat("Mean RMSE:", round(mean(cv_results$rmse, na.rm = TRUE), 2), "\n")
+```
+
+```{r cv-results-table}
+cv_results %>%
+  arrange(desc(mae)) %>%
+  kable(
+    digits = 2,
+    caption = "LOGO CV Results by District"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+Districts with the highest MAE are the hardest to predict — likely places where the relationship between spatial features and rodent complaints differs from the city-wide average, perhaps due to different housing stock, different 311 reporting behaviour, or localised pest control programmes the model doesn't capture.
+
+# Part 7: Model Evaluation
+
+## 7.1: Generate Final Predictions
+
+```{r final-predictions}
+final_model <- glmmTMB(
+  countRodent ~ rodent_baiting + rodent_baiting.nn + 
+    dist_to_hotspot + vacant_buildings,
+  data = fishnet_model,
+  family = nbinom2
+)
+
+fishnet <- fishnet %>%
+  mutate(
+    prediction_nb = predict(final_model, fishnet_model, type = "response")[match(uniqueID, fishnet_model$uniqueID)]
+  )
+
+kde_sum <- sum(fishnet$kde_value, na.rm = TRUE)
+count_sum <- sum(fishnet$countRodent, na.rm = TRUE)
+
+fishnet <- fishnet %>%
+  mutate(
+    prediction_kde = (kde_value / kde_sum) * count_sum
+  )
+```
+
+## 7.2: Compare Model vs. KDE Baseline
+
+The central question: does the regression model with its spatial features and vacant buildings predictor outperform the naive KDE? If it doesn't, the complexity isn't buying us anything.
+
+```{r compare-models}
+#| fig-width: 12
+#| fig-height: 4
+
+p1 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = countRodent), color = NA) +
+  scale_fill_viridis_c(name = "Count", option = "plasma") +
+  labs(title = "Actual Rodent Complaints") +
+  theme_crime()
+
+p2 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = prediction_nb), color = NA) +
+  scale_fill_viridis_c(name = "Predicted", option = "plasma") +
+  labs(title = "Model Predictions (Neg. Binomial)") +
+  theme_crime()
+
+p3 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = prediction_kde), color = NA) +
+  scale_fill_viridis_c(name = "Predicted", option = "plasma") +
+  labs(title = "KDE Baseline Predictions") +
+  theme_crime()
+
+p1 + p2 + p3 +
+  plot_annotation(
+    title = "Actual vs. Predicted Rodent Complaints",
+    subtitle = "Does our complex model outperform simple KDE?"
+  )
+```
+
+```{r comparison-metrics}
+comparison <- fishnet %>%
+  st_drop_geometry() %>%
+  filter(!is.na(prediction_nb), !is.na(prediction_kde)) %>%
+  summarize(
+    model_mae = mean(abs(countRodent - prediction_nb)),
+    model_rmse = sqrt(mean((countRodent - prediction_nb)^2)),
+    kde_mae = mean(abs(countRodent - prediction_kde)),
+    kde_rmse = sqrt(mean((countRodent - prediction_kde)^2))
+  )
+
+comparison %>%
+  pivot_longer(everything(), names_to = "metric", values_to = "value") %>%
+  separate(metric, into = c("approach", "metric"), sep = "_") %>%
+  pivot_wider(names_from = metric, values_from = value) %>%
+  kable(
+    digits = 2,
+    caption = "Model Performance Comparison"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## 7.3: Error Analysis
+
+Understanding *where* the model fails matters as much as the aggregate accuracy numbers. Systematic spatial patterns in the residuals would indicate that the model is missing important local variation — perhaps areas where 311 reporting rates differ from actual rodent prevalence, or where unmeasured factors (restaurant density, construction activity, sanitation infrastructure) dominate.
+
+```{r prediction-errors}
+#| fig-width: 10
+#| fig-height: 5
+
+fishnet <- fishnet %>%
+  mutate(
+    error_nb = countRodent - prediction_nb,
+    error_kde = countRodent - prediction_kde,
+    abs_error_nb = abs(error_nb),
+    abs_error_kde = abs(error_kde)
+  )
+
+p1 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = error_nb), color = NA) +
+  scale_fill_gradient2(
+    name = "Error",
+    low = "#2166ac", mid = "white", high = "#b2182b",
+    midpoint = 0
+  ) +
+  labs(title = "Model Errors (Actual - Predicted)") +
+  theme_crime()
+
+p2 <- ggplot() +
+  geom_sf(data = fishnet, aes(fill = abs_error_nb), color = NA) +
+  scale_fill_viridis_c(name = "Abs. Error", option = "magma") +
+  labs(title = "Absolute Model Errors") +
+  theme_crime()
+
+p1 + p2
+```
+
+Red cells are under-predicted (model misses rodent complaints); blue cells are over-predicted. Spatial clustering in the errors suggests residual autocorrelation the model hasn't captured — potentially addressable with additional predictors or a spatial error term.
+
+# Part 8: Model Summary
+
+## 8.1: Coefficient Table
+
+```{r model-summary-table}
+coef_table <- summary(final_model)$coefficients$cond %>%
+  as.data.frame() %>%
+  rownames_to_column("Variable") %>%
+  mutate(
+    RateRatio = exp(Estimate),
+    across(where(is.numeric), ~round(., 3))
+  ) %>%
+  dplyr::select(Variable, RateRatio, `Std. Error`, `z value`, `Pr(>|z|)`)
+
+coef_table %>%
+  kable(
+    caption = "Final Negative Binomial Model Coefficients (Exponentiated)",
+    col.names = c("Variable", "Rate Ratio", "Std. Error", "Z", "P-Value")
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  footnote(general = "Rate ratios > 1 indicate positive association with rodent complaint counts.")
+```
+
+## 8.2: Key Findings
+
+**Technical Performance:**
+
+- Cross-validation MAE: `r round(mean(cv_results$mae, na.rm = TRUE), 2)`
+- Cross-validation RMSE: `r round(mean(cv_results$rmse, na.rm = TRUE), 2)`
+- The Negative Binomial model was preferred over Poisson based on AIC, confirming overdispersion
+
+**Spatial Patterns:**
+
+- Rodent complaints are strongly clustered on the North and Northwest sides of Chicago
+- Local Moran's I hot spots overlap substantially with the highest-count fishnet cells
+- Vacant buildings provide a plausible environmental predictor — structural neglect creates rodent harbourage
+
+**Model Limitations:**
+
+- The model relies on 311 reporting, which is itself spatially biased — areas with lower 311 engagement may have under-reported rodent problems despite significant infestations
+- The `rodent_baiting` predictor and `countRodent` dependent variable are derived from the same dataset, which inflates apparent model performance. In a production setting, you'd want genuinely exogenous predictors
+- The high proportion of zero-count cells may warrant a zero-inflated model
+- Additional predictors (restaurant density, building age, alley infrastructure, sanitation routes) could improve spatial coverage in districts where the current model performs poorly
