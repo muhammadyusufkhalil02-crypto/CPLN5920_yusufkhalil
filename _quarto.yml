@@ -22,6 +22,8 @@ website:
             text: "Lab 3: Presentation"
           - href: labs/lab_4/lab_4.qmd
             text: "Lab 4: Spatial Predictive Modelling"
+          - href: labs/lab_5/lab5.qmd
+            text: "Lab 5: Temporal Predictive Modelling"
 format:
   html:
     theme: cosmo
