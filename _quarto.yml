@@ -24,6 +24,8 @@ website:
             text: "Lab 4: Spatial Predictive Modelling"
           - href: labs/lab_5/lab5.qmd
             text: "Lab 5: Temporal Predictive Modelling"
+          - href: labs/Final/finalproject_bus_version.qmd
+            text: "Final: Eviction Filing Predictive Model"
 format:
   html:
     theme: cosmo

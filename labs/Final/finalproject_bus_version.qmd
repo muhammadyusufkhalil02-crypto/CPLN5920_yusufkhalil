@@ -1,0 +1,1497 @@
+---
+title: "Final Project:"
+subtitle: "Predicting Eviction Counts by Census Tract in Philadelphia"
+author: "Huda Abdelnur, Dalanda Jalloh, Yusuf Khalil Muhammad, Wesley Nay"
+date: today
+format:
+  html:
+    code-fold: show
+    code-summary: "Show Code"
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    theme: cosmo
+    embed-resources: true
+editor: visual
+execute:
+  warning: false
+  message: false
+---
+
+# Executive Summary
+
+This project uses Philadelphia eviction filing data to identify which census tracts are most at risk of future eviction filings. The goal is to help city officials and housing stability organizations target prevention resources earlier and more effectively, rather than responding only after filings have already occurred. More specifically, this project asks whether past eviction patterns and neighborhood-level socioeconomic conditions can be used to predict future eviction filings across Philadelphia census tracts. To answer this question, we combined Princeton Eviction Lab data from 2020–2026 with Census/ACS indicators, OpenDataPhilly data, 311 maintenance complaints, bike network and landmark data, and information on Philadelphia’s top eviction filers.
+
+Our results concluded that predictive analytics can help identify areas where outreach, legal assistance, rental support, and landlord accountability efforts may be most needed. However, the model should not be used on its own to label neighborhoods as “high risk.” Because the data is aggregated by tract and reflects filings rather than completed evictions, the model identifies broader geographic patterns of housing instability rather than predicting which individual households will face eviction. As a result, predictive models should be paired with community knowledge, equity safeguards, and further investigation before guiding policy decisions.
+
+# Policy and Theoretical Background
+
+Eviction filings are closely associated with broader patterns of housing instability, financial hardship, and displacement. Even when a filing does not ultimately result in a formal eviction judgment, the filing process itself can create barriers to stable housing and contribute to future housing insecurity (National Low Income Housing Coalition, 2023). Research has also shown that eviction and housing instability are linked to increased risks of homelessness, economic hardship, and neighborhood instability. Because prevention resources such as rental assistance, legal aid, mediation programs, and tenant outreach are limited, cities increasingly rely on data-driven approaches to identify where housing instability may be intensifying before displacement occurs.
+
+Philadelphia and other cities have already implemented eviction diversion and prevention strategies that depend on tracking filing patterns and targeting interventions toward vulnerable households and neighborhoods (City of Philadelphia, 2021). Predictive models can therefore help planners and policymakers allocate limited resources more proactively and monitor changing patterns of neighborhood vulnerability over time. At the same time, predictive analytics raises important ethical and methodological concerns. Ideally, eviction risk would be modeled at the household level, since there is substantial variation within individual census tracts. However, because eviction data is highly sensitive and household-level information is not publicly available, this model relies on aggregated tract-level data. While access to more granular administrative records would likely improve predictive accuracy and allow for more targeted interventions, predictive models should still be understood as tools to supplement existing community knowledge, tenant protections, and direct engagement with affected neighborhoods.
+
+## Research Question
+
+**Can we predict in which census tracts evictions are likely to occur based on where they occurred in the past?**
+
+# 1. Data and Methods
+
+## 1.1 Set Up
+
+### 1.1.1 Load Required Packages
+
+```{r setup}
+#| message: false
+#| warning: false
+
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(sf)
+library(tigris)
+library(tidycensus)
+library(viridis)
+library(knitr)
+library(kableExtra)
+library(patchwork)
+library(scales)
+library(here)
+library(stringr)
+library(ggspatial)
+library(MASS)
+options(scipen = 999)
+
+```
+
+First, we loaded the packages needed for data cleaning, spatial analysis, visualization, Census data access, and model evaluation. These packages allow us to work with tabular data, spatial layers, ACS variables, maps, and regression models within a single workflow.
+
+## 1.2 Data Preparation
+
+### 1.2.1 Load and Clean Eviction Filing Data
+
+For this report, we are using eviction filing data spanning 2020-April 2026. This data is made available online through the Eviction Lab and was accessed through this link: https://evictionlab.org/eviction-tracking/philadelphia-pa/
+
+First, we are loading in our eviction filing data from the Eviction Lab.
+
+```{r load_evictions_data}
+#| message: false
+#| warning: false
+
+eviction_data <- read.csv("data/philadelphia_weekly_2020_2021.csv")
+
+check_one_tract <- eviction_data %>%
+  filter(GEOID == "42101027200")
+
+#I changed the data-set to get the census tracts and to make sure all the evictions were located in Philadelphia 
+eviction_data <- eviction_data %>% 
+  mutate(
+    state  = substr(GEOID, 1, 2),
+    county = substr(GEOID, 3, 5),
+    tract  = paste0("Census Tract ", as.numeric(substr(GEOID, 6, 11)) / 100)
+  ) %>%  
+  filter(state == "42", county == "101")
+
+#Added the month and year as seperate columns 
+eviction_data<- eviction_data %>% 
+  mutate(year = year(week_date),
+         month= month(week_date))
+
+#I'm adding a season column 
+eviction_data<- eviction_data %>% 
+ mutate(season = case_when(
+    month %in% c(12, 1, 2) ~ "winter",
+    month %in% c(3, 4, 5) ~ "spring",
+    month %in% c(6, 7, 8) ~ "summer",
+    TRUE ~ "fall"
+  ))
+
+monthly_filings <- read.csv("data/philadelphia_barchart.csv")
+
+filings_monthly <- read.csv("data/philadelphia_monthly_2020_2021.csv")
+
+#This breaks down the filings for each month, year and census tract 
+eviction_data_1<- eviction_data %>% 
+  group_by(GEOID, tract, year, month) %>% 
+  summarise(n= sum(filings_2020))
+
+eviction_data_1<- eviction_data_1 %>% 
+  rename(GEOID10= "GEOID")
+
+```
+
+### 1.2.2 Load Census Tract Boundaries
+
+```{r load_census_boundaries}
+#| message: false
+#| warning: false
+
+#Philadelphia census tract boundaries 
+
+census_tracts<- st_read("data/census_tracts.shp")
+
+if (st_crs(census_tracts)$epsg != 2272) {
+  census_tracts <- st_transform(census_tracts, 2272)
+}
+```
+
+After we loaded in eviction_data, we also wanted to check and explore the columns to find our unit of analysis and understand the structure of the data frame. To do this, we filter eviction_data to just one census tract by picking one GEOID. This is a data quality checking step that helps us understand the structure of data and confirm that each row represents eviction filing for a specific census tract and week.
+
+We then create additional time variables from the weekly filing date. The `year` and `month` variables allow us to summarize and compare filing patterns over time, while the `season` variable allows us to test whether eviction filings vary across winter, spring, summer, and fall. Including season is useful because eviction filings may follow temporal patterns that are not captured by geography alone.
+
+The monthly Eviction Lab files are also loaded for comparison and exploratory analysis. While the main modeling dataset uses weekly tract-level filings (eviction_data), the monthly data can help validate broader trends and provide simpler summaries for visualization. We also aggregate the weekly data by census tract, year, and month to create a monthly tract-level summary. This gives us a more flexible version of the data for exploratory analysis and mapping.
+
+Finally, we load the Philadelphia census tract boundary shapefile. This spatial layer is necessary for mapping eviction filings and for joining other spatial datasets to census tracts. We transform the tract boundaries to EPSG:2272 when needed, which is a projected coordinate reference system appropriate for Philadelphia-area spatial analysis. Using a consistent projected CRS helps ensure that spatial joins and maps align correctly throughout the analysis.
+
+# 2. Exploratory Data Analysis
+
+For preliminary exploratory data analysis, eviction filing trends were examined annually at the city-wide level. This was critical as to understand how eviction filing trends have changed overtime, especially during the years between 2020 to 2022 – the COVID-19 pandemic. It is important to denote that a temporary eviction moratorium was legalized by the Center for Disease and Control (CDC) Prevention during the pandemic, which prevented landlords from removing tenants. This moratorium by the CDC was put into effect on September 4, 2020, and ended on January 31, 2021.This was illustrated in the data, with significant lower counts of weekly eviction filings in the years 2020 and 2021; however, there is a broader pattern of a gradual increases in eviction filings from 2021 to 2022. Considering the effects of COVID-19 on eviction filing trends the years 2020-2022 were removed from the analysis to ensure stable trends were reflected in our model. Further EDA was completed by examining the distribution of eviction filings by creating a histogram, which revealed the data was heavily skewed to the left, indicating there was a high number of weeks with zero filings. 
+
+Housing eviction patterns are not consistent throughout the year, with key differences occurring by season. For example, during the winter season additional costs go towards utilities, which may increase financial burden on those who are already cost burdened, ultimately making them more prone to not being able to pay rent. Additionally, the holiday season during the winter may cause people to increase spending on other priorities outside of rent. Another season that may have an impact on eviction filings is the summer. Considering the city of Philadelphia houses multiple universities, creating an environment where the rate at which students are moving to the city may incentivize landlords to proceed with eviction filings to create rooms for new tenants. It is also very common for leases to begin during the summer with the beginning of the academic year, thus creating further incentives for landlords to increase eviction filings. These considerations were taken into account, and a plot was created to examine average weekly filings: the results in fact revealed seasons impact eviction filing trends. The highest average weekly filing was in the winter which may be due to the aforementioned issues of increased spending due to utilities and holidays, this was followed by fall, summer, then spring with lowest weekly average filings.  
+
+## 2.1 Temporal Patterns in Eviction Filings
+
+### 2.1.1 Weekly Filings Within a Single Census Tract
+
+This code chunk below was just to visually experiment with a single census tract.
+
+```{r eda_one_tract}
+#| message: false
+#| warning: false
+
+##Map all years 
+
+##Plot all years for a single tract
+check_one_tract %>%
+  mutate(year = lubridate::year(week_date)) %>%
+  group_by(year, week) %>%
+  summarize(
+    filings = sum(filings_2020, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = week, y = filings, color = factor(year))) +
+  geom_line() +
+  labs(title = "Weekly Eviction Filings by Year")
+
+#Code to plot weekly filings in 2020 for one tract
+
+check_one_tract %>%
+  filter(lubridate::year(week_date) == 2020) %>%
+  group_by(week) %>%
+  summarize(
+    filings_2020 = sum(filings_2020, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = week, y = filings_2020)) +
+  geom_line() +
+  labs(title = "Weekly Eviction Filings (2020 only)")
+
+```
+
+### 2.1.2 Citywide Weekly Eviction Filing Trends
+
+Weekly eviction filings for every year.
+
+```{r }
+# Total citywide filings per week}
+weekly_plot <- eviction_data %>%
+  mutate(year = lubridate::year(week_date)) %>%
+  group_by(year, week) %>%
+  summarize(
+    total_filings = sum(filings_2020, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  ggplot(aes(x = week, y = total_filings, color = factor(year))) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Total Weekly Eviction Filings (Philadelphia Citywide)",
+    x = "Week",
+    y = "Total Filings",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+weekly_plot
+```
+
+### 2.1.3 Distribution of Eviction Filings
+
+```{r }
+##Histogram
+ggplot(eviction_data, aes(x = filings_2020)) +
+  geom_histogram(bins = 50)
+```
+
+### 2.1.4 Seasonal Filing Patterns
+
+```{r }
+##seasonal patterns 
+seasonal_patterns <- eviction_data %>%
+  group_by(season) %>%
+  summarize(
+    avg_filings = mean(filings_2020, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+ggplot(seasonal_patterns, aes(x = season, y = avg_filings, group = 1)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 3) +
+  labs(
+    title = "Seasonal Eviction Patterns",
+    x = "Season",
+    y = "Average Filings"
+  )
+```
+
+## 2.2 Spatial Patterns of Eviction Filings
+
+Exploratory data analysis of spatial patterns was conducted to better understand where eviction filings are taking place at the census tract level within Philadelphia. Results show that weekly filings counts range across the city. Visually, majority of census tracts do not have weekly filings, while only three census tracts distinctly have 3 filings weekly.
+
+### 2.2.1 Average Eviction Filings by Census Tract
+
+```{r }
+##Map
+eviction_tract <- eviction_data %>%
+  group_by(GEOID) %>%
+  summarize(
+    avg_filings = mean(filings_2020, na.rm = TRUE),
+    total_filings = sum(filings_2020, na.rm = TRUE),
+    persistence = mean(filings_2020 > 0, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+census_tracts <- census_tracts %>%
+  rename(GEOID = GEOID10)
+
+philly_map <- census_tracts %>%
+  left_join(eviction_tract, by = "GEOID") 
+
+
+eviction_map <- ggplot(philly_map) +
+  geom_sf(aes(fill = avg_filings), color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c() +
+  
+  # --- North arrow ---
+  annotation_north_arrow(
+    location = "br",   # top right
+    which_north = "true",
+    style = north_arrow_fancy_orienteering
+  ) +
+  
+  # --- Scale bar ---
+  annotation_scale(
+    location = "bl",   # bottom left
+    width_hint = 0.3
+  ) +
+  
+  labs(
+    title = "Average Eviction Filings by Census Tract (Philadelphia)",
+    fill = "Avg filings"
+  ) +
+  theme_void()
+
+eviction_map
+
+```
+
+# 3. Constructing Predictor Variables
+
+## 3.1 Built Environment Variables
+
+```{r}
+#| message: false
+#| warning: false
+
+
+
+bike_data<- st_read("data/Bike_Network.shp")
+
+bike_data <- st_transform(bike_data, st_crs(census_tracts))
+
+bike_census<- st_join(bike_data, census_tracts, join = st_intersects) %>% 
+  group_by(NAMELSAD10) %>% 
+  tally()
+
+
+eviction_tracts_unique <- eviction_data %>% 
+  distinct(tract)
+
+setequal(bike_census$NAMELSAD10, eviction_tracts_unique$tract)
+ 
+setdiff(bike_census$NAMELSAD10, eviction_tracts_unique$tract)
+
+bad_tracts <- setdiff(bike_census$NAMELSAD10, eviction_tracts_unique$tract)
+
+bike_census <- bike_census %>%
+  filter(!NAMELSAD10 %in% bad_tracts)
+
+bike_census<- bike_census %>% 
+  rename(tract= NAMELSAD10)
+
+```
+
+Bike infrastructure was included as a built environment proxy to test whether neighborhood infrastructure patterns are associated with eviction filing activity. Bike data was obtained from Open Data Philly and joined to the census tracts. Census tracts were filtered to only the ones where evictions occurred. The number of bike lanes present in each census tract was then determined using a summarize function.
+
+### 3.1.2 Landmarks
+
+```{r}
+#| message: false
+#| warning: false
+
+landmarks<- st_read("data/Landmark_Points.shp")
+
+landmarks_subtype<- landmarks %>% 
+  group_by(SUBTYPE) %>% 
+  tally()
+
+landmarks<- st_transform(landmarks, st_crs(census_tracts))
+
+landmarks<- st_join(landmarks, census_tracts)
+
+landmarks<- landmarks %>%  
+  dplyr::select(NAME, TYPE, SUBTYPE, NAMELSAD10) %>% 
+  st_drop_geometry() %>% 
+  group_by(NAMELSAD10) %>% 
+   summarise(landmarks = n()) %>%
+  rename(tract= NAMELSAD10)
+
+```
+
+Landmark density was included as a proxy for neighborhood activity, institutional concentration, and land use intensity. Landmark data was obtained from Open Data Philly and joined to census tracts. Census tracts were filtered to only the ones where evictions occurred. The number of landmarks present in each census tract was then determined using a summarize function.
+
+## 3.2 Census and Socioeconomic Variables
+
+### 3.2.1 Demographic Variables
+
+```{r}
+#| message: false
+#| warning: false
+census<- get_acs( 
+  geography = "tract",
+  variables = c(
+    "B19013_001",  # Median household income
+    "B08301_010E",  # Transit commuters
+    "B01002_001E" #Median age 
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2024,
+  geometry = TRUE,
+  output = "wide",
+  progress_bar = FALSE
+)%>%
+  rename(
+    Med_Inc = B19013_001E,
+    Transit_Commuters = B08301_010E,
+    Median_age= B01002_001E
+  )
+
+census <- st_transform(census, 2272)
+
+# Verify
+st_crs(census)$epsg
+
+```
+
+To capture the demographics and socioeconomic of the population, data was collected from 2024 ACS Census Data. These variables provide an understanding of major indicators of eviction such as median income, age and transit commuters.
+
+### 3.2.2 Residential Mobility
+
+```{r}
+#| message: false
+#| warning: false
+
+philly_mobility <- get_acs(
+  geography = "tract",
+  variables = c(
+    "B07003_001",
+    "B07003_004",
+    "B07003_007",
+    "B07003_010",
+    "B07003_013",
+    "B07003_016"
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2024,
+  geometry = TRUE,
+  output = "wide"
+)
+
+# Rename
+philly_mobility <- philly_mobility %>%
+  rename(
+    total_pop_1yr = B07003_001E,
+    same_house = B07003_004E,
+    moved_same_county = B07003_007E,
+    moved_diff_county_same_state = B07003_010E,
+    moved_diff_state = B07003_013E,
+    moved_abroad = B07003_016E
+  )
+
+philly_mobility <- philly_mobility %>%
+  mutate(shareof_newres =  round(((moved_same_county + moved_diff_county_same_state + moved_diff_state + moved_abroad) / total_pop_1yr * 100), 1)) %>%
+  dplyr::select(-B07003_001M, -B07003_004M, -B07003_007M, -B07003_010M, -B07003_013M,-B07003_016M, -NAME) %>%
+  st_drop_geometry()
+```
+
+Residential mobility was included as a proxy for gentrification. If a neighborhood is highly desired and landlords see people moving in, this may be an indicator of gentrification. This variable seeks to measure if mobility of any socioeconomic group (wealth, race) is an indicator of increased eviction filings. Data was obtained from the 2024 ACS census.
+
+### 3.2.3 Vehicle Access
+
+```{r}
+#| message: false
+#| warning: false
+
+
+philly_vehicles <- get_acs(
+  geography = "tract",
+  variables = c(
+    "B08201_001",  # Total households
+    "B08201_002"   # No vehicle available
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2024,
+  geometry = TRUE,
+  output = "wide",
+  progress_bar = FALSE
+)
+
+# Rename and calculate share
+philly_vehicles <- philly_vehicles %>%
+  rename(
+    total_households = B08201_001E,
+    no_vehicle = B08201_002E
+  ) %>%
+  mutate(share_no_vehicle = round((no_vehicle / total_households * 100), 1)) %>% dplyr::select(-B08201_001M, -B08201_002M, -NAME) %>%
+  st_drop_geometry()
+```
+
+Vehicle ownership was added to the model as a proxy of employment stability. Vehicle ownership rate in Philadelphia is high, with around 70% of households owning at least one car. Additionally, households in areas such as Northeast and Northwest Philadelphia rely more heavily on vehicles due to poorer transit connectivity and longer commute times. This data was obtained from 2024 ACS data.
+
+### 3.2.4 Race and Ethnicity
+
+```{r}
+#| message: false
+#| warning: false
+
+
+philly_race <- get_acs(
+  geography = "tract",
+  variables = c(
+    "B03002_001",  # Total population
+    "B03002_004",  # Black alone
+    "B03002_012"   # Hispanic or Latino
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2024,
+  geometry = TRUE,
+  output = "wide",
+  progress_bar = FALSE
+)
+
+# Rename and calculate shares
+philly_race <- philly_race %>%
+  rename(
+    total_pop = B03002_001E,
+    black = B03002_004E,
+    hispanic_latino = B03002_012E
+  ) %>%
+  mutate(
+    share_black = round((black / total_pop * 100), 1),
+    share_hispanic = round((hispanic_latino / total_pop * 100), 1)) %>%
+  dplyr::select(-B03002_001M, -B03002_004M, -B03002_012M, -NAME) %>%
+  st_drop_geometry()
+
+
+```
+
+Literature reveals that eviction filings are more likely in African American/ Black and Hispanic households. Therefore, these variables were added to the model for their potentially strong predictive power. Data was obtained from the 2024 ACS Census.
+
+### 3.2.5 Rent Burden
+
+```{r}
+#| message: false
+#| warning: false
+
+philly_rent_burden <- get_acs(
+  geography = "tract",
+  variables = c(
+    "B25070_001",  # Total renter-occupied households
+    "B25070_007",  # 30.0 to 34.9 percent
+    "B25070_008",  # 35.0 to 39.9 percent
+    "B25070_009",  # 40.0 to 49.9 percent
+    "B25070_010"   # 50.0 percent or more
+  ),
+  state = "PA",
+  county = "Philadelphia",
+  year = 2024,
+  geometry = TRUE,
+  output = "wide",
+  progress_bar = FALSE
+)
+
+# Rename and calculate share
+philly_rent_burden <- philly_rent_burden %>%
+  rename(
+    total_renters = B25070_001E,
+    burden_30_34 = B25070_007E,
+    burden_35_39 = B25070_008E,
+    burden_40_49 = B25070_009E,
+    burden_50plus = B25070_010E
+  ) %>%
+  mutate(
+    rent_burdened_30plus = burden_30_34 + burden_35_39 + burden_40_49 + burden_50plus,
+    share_rent_burdened = round((rent_burdened_30plus / total_renters * 100), 1)
+  ) %>%
+  st_drop_geometry()
+
+
+```
+
+Rent burden was added to the model because rent burden and eviction are highly correlated. The more likely one is unable to pay their rent, they more likely they are to default on rent payments. The definition of rent burden used was that of the Department of Housing and Urban Development (HUD).
+
+# 4. Building the Modeling Dataset
+
+## 4.1 Creating the Census Tract-Week Panel
+
+```{r}
+
+#selecting what i need from eviction data 
+eviction_panel<- eviction_data %>% 
+  dplyr::select(GEOID, racial_majority, week, week_date, filings_2020, tract, year, month, season )
+
+# joining the other features so far into the panel 
+#landmarks
+eviction_panel<- left_join(eviction_panel, landmarks, by= "tract") 
+
+##bike
+eviction_panel<- left_join(eviction_panel, bike_census, by= "tract")
+
+eviction_panel <- eviction_panel %>%
+  rename(bikeln = n)
+#census variables 
+eviction_panel<- left_join(eviction_panel, census, by="GEOID")
+
+##mobility 
+
+eviction_panel<- left_join(eviction_panel, philly_mobility, by="GEOID")
+
+##vehicle 
+
+eviction_panel<- left_join(eviction_panel, philly_vehicles, by="GEOID")
+
+##race
+
+
+eviction_panel<- left_join(eviction_panel, philly_race, by="GEOID")
+
+##rent burden
+
+
+eviction_panel<- left_join(eviction_panel, philly_rent_burden, by="GEOID")
+
+
+
+
+```
+
+In this step, an eviction panel was created by joining our eviction data with the variables created above. The eviction panel will be used later on to create temporal lags.
+
+## 4.2 Adding 311 Maintenance Complaints
+
+```{r - calls_311}
+
+help_calls <- read.csv("data/public_cases_fc.csv")
+df_spatial <- help_calls[!is.na(help_calls$lon) & !is.na(help_calls$lat), ]
+help_calls <- st_as_sf(df_spatial, coords = c("lon", "lat"), crs = 4326)
+help_calls <- st_transform(help_calls, 2272)
+
+# Verify
+st_crs(help_calls)$epsg 
+
+help_calls1 <- help_calls %>%
+  group_by(subject) %>%
+  summarise(n = n())
+
+maintenance_complaint <-help_calls %>% 
+  filter(subject == "Maintenance Complaint") 
+  
+maintenance_complaint <- st_transform(maintenance_complaint, st_crs(census_tracts))
+maintenance_complaint <- maintenance_complaint %>% 
+  st_join(census_tracts) 
+
+maintenance_complaint<- maintenance_complaint %>% 
+  rename(tract= NAMELSAD10)
+
+maintenance_complaint_panel <- maintenance_complaint %>%
+  dplyr::select(subject, tract)
+
+maintenance_complaint_panel<- maintenance_complaint_panel %>% 
+  st_drop_geometry() %>% 
+  group_by(tract) %>% 
+   summarise(m_complaints = n())
+
+##panel created
+eviction_panel<- left_join(eviction_panel, maintenance_complaint_panel, by= "tract")
+
+##Replace with NA with zero
+eviction_panel <- eviction_panel %>%
+  dplyr::select(-ends_with("M")) %>%
+  dplyr::mutate(across(c(landmarks, m_complaints, bikeln), ~replace_na(., 0))) %>%
+  dplyr::select(-geometry.x)
+
+```
+
+Maintenance Complaints were added to the model, after the original eviction panel was created upon realizing that reported maintenance complaints could be correlated with eviction filings. As the housing stock in Philadelphia is generally older, it is possible that evictions may be due to required repairs that render the house inhabitable. Data was obtained from 311 calls on Open Data Philly. Once created, the variable was joined to the eviction panel.
+
+## 4.3 Adding Top 100 Eviction Buildings
+
+```{r}
+top100 <- read.csv("data/philadelphia_hotspots_media_report.csv")
+top100_sf <- st_as_sf(
+  top100,
+  coords = c("lon", "lat"),
+  crs = 4326   # correct starting CRS
+)
+
+census_crs <- st_transform(census, 2272)
+top100_sf <- st_transform(top100_sf, 2272)
+
+census_crs <- census_crs %>% dplyr::select(NAME, geometry, GEOID)
+##merge to eviction panel 
+census_crs$hotspot_count <- lengths(
+  st_intersects(census_crs, top100_sf)
+)
+
+eviction_panel<- left_join(eviction_panel, census_crs, by= "GEOID")
+```
+
+Here we are loading in a file that the Eviction Lab has provided that lists the top 100 buildings that process eviction filings in Philadelphia. It was then joined with 2024 ACS census data. Multiple buildings can be owned by the same person or property group therefore adding insight to a potential patterns in who is filing evictions and where these buidlings are located in Philadelphia. Once created, the variable was joined to the eviction panel.
+
+## 4.4 Temporal Feature Engineering
+
+Because eviction filings often persist over time, temporal lag variables were created to capture short-, medium-, and long-term filing dynamics within each census tract. Moving onto temporal feature engineering, because eviction filings often persist over time, temporal lag variables were created to capture short-, medium-, and long-term filing dynamics within each census tract. Firstly, due to the data being aggregated weekly, a rolling average lag was created to smooth short-term fluctuations and better capture underlying trends and reduce noise. Then a monthly lag was created (4 weeks), a 3-month lag (12 weeks), 6-month lag (26 weeks), and lastly a yearly lag. The temporal lags included weeks from 2023, 2024, and 2025.
+
+```{r}
+
+##Filter for years we want
+
+eviction_panel_filter <- eviction_panel %>%
+  filter(year(week_date) >= 2023)
+
+
+eviction_panel_filter <- eviction_panel_filter %>%
+  arrange(GEOID, week_date) %>%
+  group_by(GEOID) %>%
+  mutate(
+    # Short-term lags
+    filings_lag1week = lag(filings_2020, 1),
+    filings_lag2week = lag(filings_2020, 2),
+    filings_lag4week = lag(filings_2020, 4),
+
+    # Medium-term lags
+    filings_lag12week = lag(filings_2020, 12),
+    filings_lag26week = lag(filings_2020, 26),
+
+    # Long-term lag
+    filings_lag52week = lag(filings_2020, 52),
+
+    # Rolling average (4-week)
+    roll_avg = rowMeans(
+      cbind(
+        lag(filings_2020, 1),
+        lag(filings_2020, 2),
+        lag(filings_2020, 3),
+        lag(filings_2020, 4)
+      ),
+      na.rm = FALSE
+    )
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(filings_lag52week))
+  
+
+
+
+```
+
+## 4.5 Creating Final Model Data
+
+The Final Model Data includes all the variables needed to run the regression.
+
+```{r}
+
+eviction_panel_filter <- eviction_panel_filter %>%
+  filter(total_renters != 0) %>%
+  mutate(filing_rate = filings_2020/total_renters) 
+
+model_data <- eviction_panel_filter %>%
+  mutate(
+    season = factor(season)
+  ) %>%
+  dplyr::select(
+    GEOID,
+    tract,
+    filings_2020,
+    filings_lag1week,
+    filings_lag2week,
+    filings_lag4week,
+    filings_lag12week,
+    filings_lag26week,
+    filings_lag52week,
+    roll_avg,
+    Med_Inc,
+    Transit_Commuters,
+    Median_age,
+    shareof_newres,
+    share_no_vehicle,
+    share_black,
+    share_hispanic,
+    share_rent_burdened,
+    landmarks,
+    bikeln,
+    m_complaints,
+    month,
+    season,
+    week_date,
+    hotspot_count,
+    geometry,
+    year,
+    filing_rate
+    
+  ) %>%
+  drop_na()
+
+# converting date from character to correct date format
+model_data <- model_data %>%
+  mutate(week_date = as.Date(week_date))
+
+
+
+```
+
+## 4.6 Train-Test Split
+
+To evaluate predictive performance, observations prior to January 2025 were used for model training, while observations from January 2025 onward were reserved for testing.
+
+```{r}
+train <- model_data %>%
+  filter(week_date < as.Date("2025-01-05"))
+
+test <- model_data %>%
+  filter(week_date >= as.Date("2025-01-05"))
+```
+
+# 5. Model Selection and Development
+
+The Poisson model assumes that the variance and mean of the outcome are approximately equal. To test whether this assumption held, over-dispersion diagnostics were calculated. We found that overdispersion was present in the model, which was 2.295, exceeding the 1.5 overdispersion test threshold, making Poisson an unsuitable model. Therefore, a negative binomial was utilized to relax the variance = mean assumption. AIC cresults confirmed that the negative binomial model(43,045.58) better fit our data compared to the Poisson model (47,632.39).
+
+## 5.1 Baseline Poisson Model
+
+Because eviction filings are count data, the analysis initially tested a Poisson regression model as a baseline specification.
+
+```{r}
+
+pn_model <- glm(
+  filings_2020 ~  season + month, 
+  data = train,
+  family = poisson(link = "log")
+)
+
+summary(pn_model)
+
+exp(coef(pn_model))
+
+dispersion <- sum(residuals(pn_model, type = "pearson")^2)/
+  pn_model$df.residual
+
+cat("Dispersion parameter:", round(dispersion, 3), "\n")
+
+
+overdisp_table <- data.frame(
+  Metric = c(
+    "Mean of outcome",
+    "Variance of outcome",
+    "Variance / Mean",
+    "Dispersion (Pearson)"
+  ),
+  Value = c(
+    mean(train$filings_2020, na.rm = TRUE),
+    var(train$filings_2020, na.rm = TRUE),
+    var(train$filings_2020, na.rm = TRUE) /
+      mean(train$filings_2020, na.rm = TRUE),
+    sum(residuals(pn_model, type = "pearson")^2) /
+      pn_model$df.residual
+  )
+)
+
+overdisp_table
+
+
+overdisp_table.1 <- kable(
+  overdisp_table,
+  col.names = c("Metric", "Value"),
+  caption = "Overdispersion Diagnostics",
+  digits = 3,
+  align = c("l", "r")
+) %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+overdisp_table.1
+
+```
+
+## 5.2 Testing Eviction Rate
+
+Testing eviction rate and making it the dependent variable.
+
+```{r}
+pn_model_rate <- glm(
+  filing_rate ~  season + month, 
+  data = train,
+  family = poisson(link = "log")
+)
+
+summary(pn_model_rate)
+
+exp(coef(pn_model_rate))
+
+dispersion_rate <- sum(residuals(pn_model_rate, type = "pearson")^2)/
+  pn_model_rate$df.residual
+
+cat("Dispersion parameter:", round(dispersion, 3), "\n")
+
+
+overdisp_table_rate <- data.frame(
+  Metric = c(
+    "Mean of outcome",
+    "Variance of outcome",
+    "Variance / Mean",
+    "Dispersion (Pearson)"
+  ),
+  Value = c(
+    mean(train$filing_rate, na.rm = TRUE),
+    var(train$filing_rate, na.rm = TRUE),
+    var(train$filing_rate, na.rm = TRUE) /
+      mean(train$filing_rate, na.rm = TRUE),
+    sum(residuals(pn_model_rate, type = "pearson")^2) /
+      pn_model_rate$df.residual
+  )
+)
+
+overdisp_table_rate
+
+
+overdisp_table.1_rate <- kable(
+  overdisp_table_rate,
+  col.names = c("Metric", "Value"),
+  caption = "Overdispersion Diagnostics",
+  digits = 3,
+  align = c("l", "r")
+) %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+overdisp_table.1_rate
+```
+
+# 6. Incremental Model Building
+
+The MAE for the baseline model is 0.80, and the RMSE is 1.17 with the baseline variables being season and month.
+
+```{r}
+nb_model <- glm.nb(
+  filings_2020 ~  season + month, 
+  data = train
+)
+
+summary(nb_model)
+
+##Compare to Poisson 
+
+AIC(nb_model)
+AIC(pn_model) 
+
+##Extract 
+nb_model$theta
+
+##Calculate MAE and RMSE
+test$pred_nb <- predict(nb_model, newdata = test, type = "response")
+
+nb_MAE <- mean(abs(test$filings_2020 - test$pred_nb))
+nb_RMSE <- sqrt(mean((test$filings_2020 - test$pred_nb)^2))
+
+nb_MAE
+nb_RMSE
+
+```
+
+## 6.1 Model 1: Temporal Lag Variables
+
+The MAE for the first model is 0.779, and the RMSE is 1.617, which improved due to the addition of the temporal lags, specifically the rolling average and the 12-week. In our model we tested each combination of lags and concluded that rolling average and 3 month lag had the strongest predictive power. 
+
+```{r}
+nb_model1 <- glm.nb(
+  filings_2020 ~ season + month + roll_avg + filings_lag12week,
+  data = train
+)
+
+summary(nb_model1)
+
+nb_model1$theta
+
+test$pred_nb1 <- predict(nb_model1, newdata = test, type = "response")
+
+nb_MAE1 <- mean(abs(test$filings_2020 - test$pred_nb1))
+nb_RMSE1 <- sqrt(mean((test$filings_2020 - test$pred_nb1)^2))
+
+nb_MAE1
+nb_RMSE1
+```
+
+## 6.2 Model 2: Demographic Variables
+
+The MAE for the second model is 0.727, and the RMSE 1.212, which drastically improved due to the addition of demographic variables (share of black and hispanic populations) from the census including median household income and median age. 
+
+```{r}
+
+nb_model2 <- glm.nb(
+  filings_2020 ~ season + roll_avg + filings_lag12week + Median_age + Med_Inc + share_black + share_hispanic,
+  data = train
+)
+
+summary(nb_model2)
+
+nb_model2$theta
+
+test$pred_nb2 <- predict(nb_model2, newdata = test, type = "response")
+
+nb_MAE2 <- mean(abs(test$filings_2020 - test$pred_nb2))
+nb_RMSE2 <- sqrt(mean((test$filings_2020 - test$pred_nb2)^2))
+
+nb_MAE2
+nb_RMSE2
+
+
+```
+
+## 6.3 Model 3: Housing Vulnerability and Mobility
+
+The MAE for the third model is 0.73, and the RMSE 1.226, highlighting that the addition of the share of new residents, and the proportion of renters cost burdened, and the interaction effect of share black with rent burden as mentioned literature actually did not improve our model. 
+
+```{r}
+
+nb_model3 <- glm.nb(
+  filings_2020 ~ season + month + roll_avg + filings_lag12week +
+    #Demographics
+    Med_Inc + Median_age + share_black + share_hispanic +
+    shareof_newres + 
+    #Rent Burden 
+    share_rent_burdened + share_black*share_rent_burdened,
+  data = train
+)
+
+summary(nb_model3)
+
+nb_model3$theta
+
+test$pred_nb3 <- predict(nb_model3, newdata = test, type = "response")
+
+nb_MAE3 <- mean(abs(test$filings_2020 - test$pred_nb3))
+nb_RMSE3 <- sqrt(mean((test$filings_2020 - test$pred_nb3)^2))
+
+nb_MAE3
+nb_RMSE3
+```
+
+## 6.4 Model 4: Built Environment and Maintenance Complaints
+
+The MAE for the fourth model is 0.722, and the RMSE is 1.18, indicating that landmarks, bike lanes, and maintenance complain slightly improved the model. 
+
+```{r}
+nb_model4 <- glm.nb(
+  filings_2020 ~ season + month + roll_avg + filings_lag12week +
+    #Demographics
+    Med_Inc + Median_age + share_black + share_hispanic +
+    shareof_newres + 
+    #Rent Burden 
+    share_rent_burdened + share_black*share_rent_burdened +
+    #Landmarks, bike lanes, maintenance complaints
+    landmarks + bikeln + m_complaints,
+  data = train
+)
+
+summary(nb_model4)
+
+nb_model4$theta
+
+test$pred_nb4 <- predict(nb_model4, newdata = test, type = "response")
+
+nb_MAE4 <- mean(abs(test$filings_2020 - test$pred_nb4))
+nb_RMSE4 <- sqrt(mean((test$filings_2020 - test$pred_nb4)^2))
+
+nb_MAE4
+nb_RMSE4
+
+```
+
+## 6.5 Model 5: Landlord Concentration (Final Model)
+
+The MAE for the final model is 0.709, and the RMSE is 1.156, revealing that the top 100 buildings with eviction filings moderately improved the model. 
+
+```{r}
+nb_model5 <- glm.nb(
+   filings_2020 ~ season + month + roll_avg + filings_lag12week +
+    Med_Inc + Median_age +
+    shareof_newres + share_no_vehicle +
+    share_black + share_hispanic + share_rent_burdened +
+    share_black*share_rent_burdened + hotspot_count +
+    landmarks + bikeln + m_complaints,
+  data = train
+)
+
+summary(nb_model5)
+
+nb_model5$theta
+
+
+test$pred_nb5 <- predict(nb_model5, newdata = test, type = "response")
+
+nb_MAE5 <- mean(abs(test$filings_2020 - test$pred_nb5))
+nb_RMSE5 <- sqrt(mean((test$filings_2020 - test$pred_nb5)^2))
+
+nb_MAE5
+nb_RMSE5
+```
+
+# 7. Model Evaluation
+
+We evaluated the six negative binomial specifications on the 2025 test set using Mean Absolute Error (MAE) and Root Mean Squared Error (RMSE). Both measure how far our predicted weekly filing counts deviate from observed counts at the tract-week level, with RMSE penalising large errors more heavily than MAE.
+
+```{r - Model Evaluation}
+
+test <- test %>%
+  mutate(
+    pred = predict(nb_model,  newdata = test, type = "response"),
+    pred1 = predict(nb_model1, newdata = test, type = "response"),
+    pred2 = predict(nb_model2, newdata = test, type = "response"),
+    pred3 = predict(nb_model3, newdata = test, type = "response"),
+    pred4 = predict(nb_model4, newdata = test, type = "response"),
+    pred5 = predict(nb_model5, newdata = test, type = "response")
+  )
+
+mae_baseline <- data.frame(
+  Model = c("1. Baseline season",
+            "2. + temporal lags",
+            "3. + demographics",
+            "4. + rent burden, mobility, interaction effect",
+            "5. + landmarks, bike lanes, and maintenance complaints",
+            "6. + top 100 properties with filing evictions"),
+  MAE   = c(
+    mean(abs(test$filings_2020 - test$pred), na.rm = TRUE),
+    mean(abs(test$filings_2020 - test$pred1), na.rm = TRUE),
+    mean(abs(test$filings_2020 - test$pred2), na.rm = TRUE),
+    mean(abs(test$filings_2020 - test$pred3), na.rm = TRUE),
+    mean(abs(test$filings_2020 - test$pred4), na.rm = TRUE),
+    mean(abs(test$filings_2020 - test$pred5), na.rm = TRUE)
+  )
+)
+
+kable(mae_baseline, digits = 3,
+      caption = "MAE by model — 2025 test set",
+      col.names = c("Model", "MAE")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+model_comparison <- ggplot(mae_baseline, aes(x = Model, y = MAE)) +
+  geom_col(fill = "#3182bd", alpha = .8) +
+  geom_text(aes(label = round(MAE, 3)), vjust = -0.5) +
+  labs(title = "Model Performance Comparison",
+       x = "Model", y = "MAE") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylim(0, 1)
+
+
+model_comparison
+```
+
+Performance improves as we add predictors, but most of the gain comes early. The baseline (Model 0), with only season and month, gives an MAE of 0.80 and an RMSE of 1.17. Adding the rolling four-week average and the 12-week lag in Model 1 drops MAE to 0.78 but pushes RMSE up to 1.62. The lags help on average but introduce a small number of large overpredictions in tracts where past activity does not predict forward cleanly. Model 2 adds tract-level demographics, which brings RMSE back down to 1.21 and MAE to 0.73. Models 3 and 4 add rent burden, mobility, the share-Black × rent-burdened interaction, landmarks, bike lanes, and 311 maintenance complaints, but the marginal gains are small. Our final specification, Model 5, adds the count of top-100 filer hotspots per tract and performs best overall, with an MAE of 0.71 and RMSE of 1.16.
+
+One finding stands out. First, the temporal lags contribute greatly to the predictive accuracy. The total model improvement from our baseline to final model is 0.093, of which model 1 (adding temporal lags) contributes roughly 0.02 which is about 22% of the total improvement. The mean of the outcome is well below one filing per tract-week, so an average error of 0.71 is large relative to a typical observation. The model is more useful for separating tracts that consistently see filings from tracts that rarely do than for forecasting the precise number of filings in any given week.
+
+# 8. Diagnostic and Error Analysis (Model 5)
+
+## 8.1 Spatial Error Analysis
+
+```{r - Spatial Errors}
+#| message: false
+#| warning: false
+
+# --- Create prediction error ---
+test <- test %>%
+  mutate(
+    error = filings_2020 - pred5,
+    abs_error = abs(error),
+    pct_error = (pred5 - filings_2020) / (filings_2020 +1) * 100)
+
+# --- Aggregate errors at tract level ---
+tract_errors <- test %>%
+  filter(!is.na(pred5)) %>%
+  group_by(GEOID) %>%
+  summarise(
+    MAE = mean(abs_error, na.rm = TRUE),
+    avg_eviction_filing = mean(filings_2020, na.rm = TRUE),
+    prediction = mean(pred5, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# --- Join to spatial geometry ---
+tract_errors_sf <- census_tracts %>%
+  left_join(tract_errors, by = "GEOID")
+
+# --- Map 1: Prediction error ---
+p1 <- ggplot() +
+  geom_sf(
+    data = tract_errors_sf,
+    aes(fill = MAE),
+    color = "white",
+    linewidth = 0.1
+  ) +
+   # --- North arrow ---
+  annotation_north_arrow(
+    location = "br",   # top right
+    which_north = "true",
+    style = north_arrow_fancy_orienteering
+  ) +
+  
+  # --- Scale bar ---
+  annotation_scale(
+    location = "bl",   # bottom left
+    width_hint = 0.3
+  ) +
+    scale_fill_viridis_c(option = "plasma", direction = -1) +
+  labs(title = "Prediction Error (MAE)") +
+ theme_void() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# --- Map 2: Observed eviction rates ---
+p2 <- ggplot() +
+  geom_sf(
+    data = tract_errors_sf,
+    aes(fill = avg_eviction_filing),
+    color = "white",
+    linewidth = 0.1
+  ) +
+  scale_fill_viridis_c(option = "plasma", direction = -1) +
+  labs(title = "Observed Eviction Filing") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+p3 <- ggplot() +
+  geom_sf(
+    data = tract_errors_sf,
+    aes(fill = prediction),
+    color = "white",
+    linewidth = 0.1
+  ) +
+  scale_fill_viridis_c(option = "plasma", direction = -1)+
+  labs(title = "Predicted Eviction Filing") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+(p1)
+
+(p2)
+
+(p3)
+
+
+```
+
+The comparison shows that our errors are not randomly distributed. The lowest MAE values (are in the low-filing periphery: most of Northeast Philadelphia, the affluent tracts around the northwest, and of South Philadelphia. To contextualize these errors, we compare the prediction error map (p1) directly against maps of observed eviction filings (p2) and predicted filings (p3). This comparison is critical for determining if the model's failures are concentrated in high-volume "eviction hotspots" or if they occur randomly across the city. These are areas where observed filings are also low, and the model has little to get wrong. Errors rise through North Philadelphia and some parts of West Philadelphia. This is precisely where the observed filing map shows the highest filing density. One tract in North Philadelphia stands out with an MAE \> 6 and corresponds directly to the dark tract in the observed map where average filings exceed 4 per week. Hence, we substantially under-predict the most extreme hotspot in the city. This can be considered an outlier.
+
+## 8.2 Temporal Error Analysis
+
+The temporal error analysis evaluates the consistency of Model 5's performance across times of the year by aggregating MAE by season. Eviction filings in Philadelphia often follow cyclical patterns, so it is important to ensure that the model does not lose predictive power during specific months. We calculate the average absolute distance between predicted and observed filings for winter, spring, summer, and fall.
+
+```{r - Temporal Errors}
+#| message: false
+#| warning: false
+
+# Aggregate Model 5 errors by season and pre/post-law period
+temporal_errors <- test %>%
+  filter(!is.na(pred5)) %>%
+  mutate(
+    season         = factor(season, levels = c("winter", "spring", "summer", "fall"))
+  ) %>%
+  group_by(season) %>%
+  summarise(
+    MAE = mean(abs_error, na.rm = TRUE),
+    n   = n(),
+    .groups = "drop"
+  )
+
+p9 <- ggplot(temporal_errors, aes(x = season, y = MAE,)) +
+  geom_col(fill = "#3182bd", position = "dodge") +
+  geom_text(aes(label = round(MAE, 2)), vjust = -.5) +
+  labs(
+    title = "Prediction errors by season",
+    x     = "Season",
+    y     = "MAE",
+    fill  = "Policy period"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p9
+
+```
+
+The seasonal MAE plot shows that performance is broadly stable across the calendar year. Errors range from 0.67 in spring to 0.74 in winter. Spring is our best-performing season, winter is our worst, but the spread of 0.07 is small relative to the overall MAE of 0.71 and unlikely to reflect a meaningful seasonal weakness in the specification. Winter being slightly harder is consistent with our understanding of eviction filings in Philadelphia. Spring's strong performance likely reflects that filings then most closely follow the rolling-average and 12-week lag patterns that drive the model.
+
+We can conclude that the residual error is overwhelmingly cross-sectional rather than temporal. The models issues are in predicting tract-level intensity.
+
+## 8.3 Demographic Error Analysis
+
+To check whether prediction errors track structural neighbourhood characteristics, we plotted tract-level MAE against four demographic variables: median household income, share of rent-burdened households, share Black, and share Hispanic.
+
+```{r - Demographic Errors}
+
+# Aggregate Model 5 errors and demographics by tract
+tract_errors_demo <- test %>%
+  filter(!is.na(pred5)) %>%
+  group_by(GEOID) %>%
+  summarise(
+    MAE                  = mean(abs_error, na.rm = TRUE),
+    Med_Inc              = first(Med_Inc),
+    share_rent_burdened  = first(share_rent_burdened),
+    share_black          = first(share_black),
+    share_hispanic       = first(share_hispanic),
+    .groups              = "drop"
+  ) %>%
+  filter(!is.na(Med_Inc))
+
+p4 <- ggplot(tract_errors_demo, aes(x = Med_Inc, y = MAE)) +
+  geom_point(alpha = 0.5, color = "#3182bd") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  scale_x_continuous(labels = scales::dollar) +
+  labs(title = "Errors vs. median income",
+       x = "Median household income", y = "MAE") +
+  theme_minimal()
+
+p5 <- ggplot(tract_errors_demo, aes(x = share_rent_burdened, y = MAE)) +
+  geom_point(alpha = 0.5, color = "#3182bd") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Errors vs. rent burden",
+       x = "% rent-burdened (30%+ of income on rent)", y = "MAE") +
+  theme_minimal()
+
+p6 <- ggplot(tract_errors_demo, aes(x = share_black, y = MAE)) +
+  geom_point(alpha = 0.5, color = "#3182bd") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Errors vs. share Black",
+       x = "% Black", y = "MAE") +
+  theme_minimal()
+
+p7 <- ggplot(tract_errors_demo, aes(x = share_hispanic, y = MAE)) +
+  geom_point(alpha = 0.5, color = "#3182bd") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Errors vs. share Hispanic",
+       x = "% Hispanic", y = "MAE") +
+  theme_minimal()
+
+(p1 | p2) / (p3 | p4)
+p1
+p2
+p3
+p4
+p5
+p6
+p7
+```
+
+The clearest relationship is with median household income. MAE falls as income rises. The fitted line slopes downward with the few tracts with MAE above 2 are almost all in the lower half of the income distribution. The relationship with the other three variables is much weaker. MAE shows only modest variation with rent burden, share Black, or share Hispanic, and the fitted lines are close to flat.
+
+That being said, the negative relationship between median income provides further evidence that our model predicts better in tracts with fewer eviction filings (wealthy areas).
+
+## 8.4 Predicted vs Fitted
+
+Because the outcome is a count rather than a binary indicator, we plot observed filings against predicted filings on the test set and by season and year. The red 45-degree line marks perfect calibration. The green line is the OLS fit through the actual data.
+
+```{r}
+#| message: false
+#| warning: false
+
+test <- test %>%
+  mutate(
+    error     = filings_2020 - pred5,
+    abs_error = abs(error),
+    pct_error = (pred5 - filings_2020)/(filings_2020 +1) *100
+  )
+
+
+##Visualize
+p10 <- ggplot(test, aes(x = filings_2020, y = pred5)) +
+  geom_jitter(alpha = 0.2, color = "#3182bd", width = 0.05, height = 0) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linewidth = 1) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkgreen") +
+  facet_grid(season ~ year) +
+  labs(title = "Observed vs. predicted — 2025 test set",
+       subtitle = "Model 5; red = perfect calibration, green = fitted trend",
+       x = "Observed (1 = eviction filed)", y = "Predicted probability") +
+  theme_minimal()
+
+p10
+
+```
+
+The plot shows systematic under-prediction at the upper tail. The green line sits well below the red line in every facet, and the gap widens as observed filings increase. This is a limitation of negative binomial regression on heavily right-skewed count data (zero inflated).
+
+## 8.5 Model Comparison Summary
+
+```{r}
+# create table of comparison rmse, mae
+model_names <- c("1. Baseline season", "2. + temporal lags", "3. + demographics", "4. + rent burden, mobility, interaction effect", "5. + landmarks, bike lanes, and maintenance complaints", "6. + top 100 property owners filing evictions (Final)")
+
+models <- list(nb_model, nb_model1, nb_model2, nb_model3, nb_model4, nb_model5)
+
+comparison <- data.frame(
+  Model = model_names,
+  MAE = round(c(nb_MAE, nb_MAE1, nb_MAE2, nb_MAE3, nb_MAE4, nb_MAE5), 2),
+  RMSE = round(c(nb_RMSE, nb_RMSE1, nb_RMSE2, nb_RMSE3, nb_RMSE4, nb_RMSE5), 2)
+)
+
+comparison_m <- kable(comparison,
+      col.names = c("Model", "MAE", "RMSE"),
+      align = "lccc",
+      caption = "Each layer prediction improves prediction") %>%
+  kable_styling(font_size = 20, full_width = FALSE) %>%
+  row_spec(nrow(comparison), bold = TRUE, background = "#27AE60")
+
+comparison_m
+```
+
+The model comparison table shows that performance improves at every layer, but not evenly. The largest single gain comes from adding tract-level demographics in Model 2, which drops MAE from 0.78 to 0.73 and pulls RMSE back from 1.62 to 1.21 after the lags inflated it in Model 1. This reflects the literature that has suggested Black and Hispanic populations are more vulnerable to evictions, which may be the reason it is contributing to the predictive power in the model.
+
+# 9. Additional Context Maps
+
+Below are a series of maps that illustrate where rent burden and demographics are distributed throughout Philadelphia.
+
+## 9.1 Rent Burden by Census Tract
+
+```{r}
+##Maps rent burden
+library(ggspatial)
+
+philly_rent_burden1 <- left_join(census_crs, philly_rent_burden,  by = "GEOID")
+
+rent_map <- ggplot(philly_rent_burden1) +
+  geom_sf(aes(fill = share_rent_burdened), color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c() +
+  
+  # --- North arrow ---
+  annotation_north_arrow(
+    location = "br",   # top right
+    which_north = "true",
+    style = north_arrow_fancy_orienteering
+  ) +
+  
+  # --- Scale bar ---
+  annotation_scale(
+    location = "bl",   # bottom left
+    width_hint = 0.3
+  ) +
+  
+  labs(
+    title = "Share of People who are Rent Burdened by Census Tract",
+    fill = "Share of People Whoe Are Rent Burdened"
+  ) +
+  theme_void()
+
+rent_map
+
+philly_race1 <- left_join(census_crs, philly_race,  by = "GEOID")
+```
+
+## 9.2 Black Population Share by Census Tract
+
+```{r}
+black <- ggplot(philly_race1) +
+  geom_sf(aes(fill = share_black), color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c() +
+  
+  # --- North arrow ---
+  annotation_north_arrow(
+    location = "br",   # top right
+    which_north = "true",
+    style = north_arrow_fancy_orienteering
+  ) +
+  
+  # --- Scale bar ---
+  annotation_scale(
+    location = "bl",   # bottom left
+    width_hint = 0.3
+  ) +
+  
+  labs(
+    title = "Share of Black Population by Census Tract",
+    fill = "Share of Black Population"
+  ) +
+  theme_void()
+
+black
+```
+
+## 9.3 Hispanic Population Share by Census Tract
+
+```{r}
+hispanic <- ggplot(philly_race1) +
+  geom_sf(aes(fill = share_hispanic), color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c() +
+  
+  # --- North arrow ---
+  annotation_north_arrow(
+    location = "br",   # top right
+    which_north = "true",
+    style = north_arrow_fancy_orienteering
+  ) +
+  
+  # --- Scale bar ---
+  annotation_scale(
+    location = "bl",   # bottom left
+    width_hint = 0.3
+  ) +
+  
+  labs(
+    title = "Share of Hispanic Population by Census Tract",
+    fill = "Share of Hispanic Population"
+  ) +
+  theme_void()
+
+hispanic
+
+
+
+```
+
+# 10. Discussion
+
+## 10.1 Feedback Consideration and Implementation
+
+The feedback our team received was implemented into our analysis; however, diagnostics informed our decisions of preserving the original methodology that was developed. The suggestion of turning eviction filings into a rate by dividing the count of evictions by renter occupied households was considered and became the dependent variable. As per Dr. Lassitter’s recommendation of utilizing a Poisson, the dependent variable was tested with the baseline model including month and season. Diagnostics were then completed and severe under dispersion was detected with a result of 0.005. As a result, the decision to preserve weekly count was decided upon. 
+
+## 10.2 Policy Implications
+
+Our model, which examines and predicts weekly eviction filings, not only identifies trends but also serves as an early warning system, enabling timely and targeted policy interventions to prevent eviction spikes. Such interventions may include measures like temporary eviction moratoriums during periods of elevated risk, such as winter months, when conditions in cities like Philadelphia, characterized by cold temperatures and snow, can increase vulnerability and the risk of homelessness. By anticipating periods of heightened risk, policymakers can act proactively rather than reactively, reducing both the incidence and severity of housing instability. However, because the model performs more accurately in higher-income areas, policymakers should exercise caution when applying its predictions to lower-income communities, where eviction patterns may be less predictable and where the need for intervention is often greatest. This limitation highlights the importance of supplementing model predictions with local knowledge and additional data to ensure that policy responses remain both effective and equitable
+
+## 10.3 Limitations and Ethical Considerations
+
+One potential limitation of this model is that we have data from a limited time period. This is because data from 2020 to 2022 was omitted due to potential variability following the aftermath of COVID 19. Therefore, our temporal lags are less robust than lags that would have included more weekly observations. Additionally, this reduced the size of our overall observations which could have reduced the predictive power of the model by not having an adequate train/split pool. Additionally, reasons for eviction patterns usually present themselves more clearly at the neighborhood level, but in this analysis we are using the census tracts which may not be the best geographical unit to understand the varying factors that contribute to dynamic neighborhood change. Another limitation is that despite the benefits of weekly evictions, it may have been more valuable to have aggregated to the monthly level in order to a present a more compelling case at the bureaucratic level for intervention. Because weekly filings are low, predictions may not be drastic enough for the city to mobilize resources and personnel to take action. This is especially important since not all eviction filings result in an eviction. General limitations outside the control of the model include not knowing where exactly the eviction filings are taking place, which is limited for privacy purposes. A more granular spatial component could have increased the predictability of the model. Moreover, a variable on the reason for eviction could have added more nuance and allowed a prediction more targeted to individual drivers of eviction as not all evictions are due to non-payment of rent.
+
+## 11. Conclusion
+
+This research study included a process of a brief literature review, exploratory data analysis, methodology, and model validation to create a model that predicts weekly eviction filings with the goal of informing proactive policy rather than reactive. The final model performs fairly well against conventional statistical standards. Further research can include more granular data to improve predictive power, which may address the model's capacity to predict in lower income areas, serving as an equitable approach that the city of Philadelphia can adopt.
